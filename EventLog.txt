@@ -1,0 +1,8 @@
+=== Event Log Started: 2026-05-26 20:59:53 ===
+[20:59:53.634] [Logger] Initialized.
+[20:59:53.700] [Logger] Call dispatch tracking ACTIVE — logging all pool activations/deactivations
+[20:59:53.701] [Logger] Weapon tracking ACTIVE — scanning every 1.5s for equipped items
+[20:59:53.701] [Logger] NPC interaction tracking ACTIVE
+[20:59:54.637] [Weapon] Player not found via tag/name
+[20:59:54.641] [Weapon] Total GameObjects in scene: 41
+[20:59:54.641] [Weapon] MainCamera found

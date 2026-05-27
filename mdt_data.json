@@ -1,0 +1,45 @@
+{
+  "Citations": [],
+  "Charges": [
+    {
+      "Id": "MDT-000001",
+      "SubjectName": "John Jackson",
+      "Charge": {
+        "Name": "Fraudulent Registration",
+        "Statute": "R-205",
+        "Category": 1,
+        "Class": 1,
+        "FineMin": 500,
+        "FineMax": 2000,
+        "JailDaysMin": 0,
+        "JailDaysMax": 30
+      },
+      "FiledAt": "2026-05-26T13:39:47.2393274-04:00",
+      "FiledBy": "Officer",
+      "Verdict": {
+        "Outcome": "Guilty",
+        "Fine": 1283,
+        "JailDays": 0,
+        "ReducedTo": "",
+        "RuledAt": "2026-05-26T13:41:12.3296857-04:00"
+      }
+    }
+  ],
+  "Arrests": [
+    {
+      "Id": "MDT-000002",
+      "SubjectName": "John Jackson",
+      "ArrestedAt": "2026-05-26T13:39:47.2634999-04:00",
+      "Location": "Gay st",
+      "NatureOfArrest": "gay",
+      "DOB": "1/1/2000",
+      "LicensePlate": "999999",
+      "Witnesses": [],
+      "ArrestingOfficer": "Officer",
+      "ChargeIds": [
+        "MDT-000001"
+      ]
+    }
+  ],
+  "NextId": 2
+}
