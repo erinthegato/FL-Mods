@@ -30,8 +30,13 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private float _panicCooldownTimer;
     private string _panicButtonDir = "";
     private string _code99Dir = "";
+    private string[] _panicToneFiles = Array.Empty<string>();
+    private string[] _code99Files = Array.Empty<string>();
+    private bool _loggedMissingPanicTone;
+    private bool _loggedMissingCode99;
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
+    private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
 
     // ═══════════════════════════════════════════════════
     //  LIFECYCLE
@@ -128,7 +133,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy)
             {
                 var n = _cachedWeapon.name;
-                if (n.Contains("Gun_AP58") || n.Contains("Wep_Pistol_01"))
+                if (IsWeaponName(n))
                     return;
             }
             _cachedWeapon = null;
@@ -144,20 +149,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             }
 
             if (_cachedWeapon == null)
-            {
-                var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-                if (scene.IsValid())
-                {
-                    foreach (var root in scene.GetRootGameObjects())
-                    {
-                        if (root == null) continue;
-                        _cachedWeapon = FindWeapon(root.transform);
-                        if (_cachedWeapon != null) break;
-                    }
-                }
-            }
-
-            if (_cachedWeapon == null)
                 _panicFired = false;
         }
         catch { }
@@ -170,12 +161,20 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             var child = t.GetChild(i);
             if (!child.gameObject.activeInHierarchy) continue;
             var n = child.name;
-            if (n.Contains("Gun_AP58") || n.Contains("Wep_Pistol_01"))
+            if (IsWeaponName(n))
                 return child;
             var found = FindWeapon(child);
             if (found != null) return found;
         }
         return null;
+    }
+
+    private static bool IsWeaponName(string name)
+    {
+        foreach (var weaponName in WeaponNames)
+            if (name.Contains(weaponName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     private void FirePanic(string weapon)
@@ -196,27 +195,47 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         string root = FindGameRoot();
         _panicButtonDir = Path.Combine(root, "DispatchAudio", "Panic Button");
         _code99Dir = Path.Combine(_panicButtonDir, "Code99");
+        _panicToneFiles = LoadWavs(_panicButtonDir);
+        _code99Files = LoadWavs(_code99Dir);
     }
 
     private async Task PlayPanicSequenceAsync()
     {
-        string? tone = PickRandomWav(_panicButtonDir);
+        string? tone = PickRandomWav(_panicToneFiles);
         if (tone != null)
             await PlayWavSyncAsync(tone);
-        else
+        else if (!_loggedMissingPanicTone)
+        {
+            _loggedMissingPanicTone = true;
             MelonLogger.Warning($"[GameEventLogger] No panic button tones found in {_panicButtonDir}");
+        }
 
-        string? code99 = PickRandomWav(_code99Dir);
+        string? code99 = PickRandomWav(_code99Files);
         if (code99 != null)
             await PlayWavSyncAsync(code99);
-        else
+        else if (!_loggedMissingCode99)
+        {
+            _loggedMissingCode99 = true;
             MelonLogger.Warning($"[GameEventLogger] No Code99 files found in {_code99Dir}");
+        }
     }
 
-    private static string? PickRandomWav(string dir)
+    private static string[] LoadWavs(string dir)
     {
-        if (!Directory.Exists(dir)) return null;
-        var files = Directory.GetFiles(dir, "*.wav", SearchOption.TopDirectoryOnly);
+        try
+        {
+            return Directory.Exists(dir)
+                ? Directory.GetFiles(dir, "*.wav", SearchOption.TopDirectoryOnly)
+                : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string? PickRandomWav(string[] files)
+    {
         if (files.Length == 0) return null;
         return files[UnityEngine.Random.Range(0, files.Length)];
     }

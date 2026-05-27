@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using FlashingLights.ModKit.Core;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace NPCAI;
 
@@ -30,10 +31,13 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private GameObject? _nearbyNpc;
     private GameObject? _cachedPlayer;
     private float _nextNpcScanTime;
+    private float _nextNpcCacheRefreshTime;
+    private readonly List<GameObject> _npcCandidates = new();
     private Vector3 _lastInteractionPosition;
     private bool _hasLastInteractionPosition;
     private const float SamePositionTolerance = 1.5f;
-    private const float NearbyScanInterval = 0.35f;
+    private const float NearbyScanInterval = 0.5f;
+    private const float NpcCacheRefreshInterval = 4f;
 
     private static readonly string[] _personalities = new[]
     {
@@ -150,6 +154,9 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
             return _nearbyNpc;
 
         _nextNpcScanTime = Time.unscaledTime + NearbyScanInterval;
+        if (force || Time.unscaledTime >= _nextNpcCacheRefreshTime)
+            RefreshNpcCache();
+
         var player = FindPlayer();
         if (player == null)
         {
@@ -161,10 +168,14 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         float best = maxDist * maxDist;
         GameObject? bestNpc = null;
 
-        foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())
+        for (int i = _npcCandidates.Count - 1; i >= 0; i--)
         {
-            if (go == null || !go.scene.IsValid() || !go.activeInHierarchy) continue;
-            if (!IsNpcCandidate(go)) continue;
+            var go = _npcCandidates[i];
+            if (!IsValidNpc(go))
+            {
+                _npcCandidates.RemoveAt(i);
+                continue;
+            }
 
             float d = (go.transform.position - player.transform.position).sqrMagnitude;
             if (d < best)
@@ -179,15 +190,54 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     }
 
     private static bool IsValidNpc(GameObject? go) =>
-        go != null && go.scene.IsValid() && go.activeInHierarchy && IsNpcCandidate(go);
+        go != null && go.scene.IsValid() && go.activeInHierarchy && IsNpcCandidate(go) && HasNpcBody(go);
+
+    private void RefreshNpcCache()
+    {
+        _nextNpcCacheRefreshTime = Time.unscaledTime + NpcCacheRefreshInterval;
+        _npcCandidates.Clear();
+
+        var scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid()) return;
+
+        foreach (var root in scene.GetRootGameObjects())
+        {
+            if (root == null || !root.activeInHierarchy) continue;
+            CollectNpcCandidates(root.transform);
+        }
+    }
+
+    private void CollectNpcCandidates(Transform root)
+    {
+        if (root == null) return;
+
+        var go = root.gameObject;
+        if (IsValidNpc(go))
+        {
+            _npcCandidates.Add(go);
+            return;
+        }
+
+        int count = root.childCount;
+        for (int i = 0; i < count; i++)
+            CollectNpcCandidates(root.GetChild(i));
+    }
 
     private static bool IsNpcCandidate(GameObject go)
     {
         string n = go.name;
+        if (n.Contains("Terrain", StringComparison.OrdinalIgnoreCase) ||
+            n.Contains("Marker", StringComparison.OrdinalIgnoreCase) ||
+            n.EndsWith("-Pos", StringComparison.OrdinalIgnoreCase) ||
+            n.EndsWith("_Pos", StringComparison.OrdinalIgnoreCase))
+            return false;
+
         if (n.Contains("NPC", StringComparison.OrdinalIgnoreCase) ||
-            n.Contains("AI", StringComparison.OrdinalIgnoreCase) ||
             n.Contains("Civilian", StringComparison.OrdinalIgnoreCase) ||
-            n.Contains("Ped", StringComparison.OrdinalIgnoreCase))
+            n.Contains("Ped", StringComparison.OrdinalIgnoreCase) ||
+            n.StartsWith("AI_", StringComparison.OrdinalIgnoreCase) ||
+            n.StartsWith("AI-", StringComparison.OrdinalIgnoreCase) ||
+            n.Equals("AI", StringComparison.OrdinalIgnoreCase))
             return true;
 
         var parent = go.transform.parent;
@@ -202,6 +252,11 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
 
         return false;
     }
+
+    private static bool HasNpcBody(GameObject go) =>
+        go.GetComponent<Collider>() != null ||
+        go.GetComponent<Rigidbody>() != null ||
+        go.GetComponent<Renderer>() != null;
 
     private static GameObject? FindPlayer()
     {
