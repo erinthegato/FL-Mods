@@ -7,6 +7,8 @@
   </PropertyGroup>
   <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(GameRoot)' != ''">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).exe" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
-    <Message Text="Deployed FLWatchdog.exe to $(GameRoot)\Mods" Importance="high" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).runtimeconfig.json" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
+    <Message Text="Deployed FLWatchdog to $(GameRoot)\Mods" Importance="high" />
   </Target>
 </Project>

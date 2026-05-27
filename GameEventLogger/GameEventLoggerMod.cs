@@ -105,6 +105,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private float _fireEffectCleanupTimer;
     private const float FireEffectCleanupInterval = 10f;
     private bool _firstScan = true;
+    private bool _didPlayerDump;
 
     // ── NPC interaction ──
     private bool _lastNpcInteraction;
@@ -112,14 +113,14 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private const float NpcInteractionInterval = 1f;
 
     // ── NPC name generation ──
-    private string? _lastNpcNameGenerated;
+    private readonly HashSet<string> _seenNpcNames = new();
 
     // ── Database tracking ──
     private float _dbTimer;
     private const float DbCheckInterval = 5f;
 
     // ── Generation tracking ──
-    private string? _lastGenerationEvent;
+    private readonly HashSet<string> _seenGenerationEvents = new();
 
     // ── Call tracking ──
     internal readonly HashSet<string> ActiveCalls = new();
@@ -574,13 +575,64 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
     }
 
+    private const int MaxCrashLogRate = 50;
+    private static int _crashLogCount;
+    private static readonly TimeSpan CrashLogWindow = TimeSpan.FromSeconds(30);
+    private static DateTime _crashLogWindowStart = DateTime.MinValue;
+
+    private static readonly string[] NoisePatterns = {
+        "Releasing render texture that is set as Camera.targetTexture",
+        "Releasing render texture that is set to be Render Texture",
+        "The character controller does not support swimming",
+        "The referenced script on this Behaviour",
+        "Can't add component",
+        "Shader warning",
+        "D3D11: ID3D11DeviceContext::DrawIndexed",
+        "D3D11: Removing Device",
+        "Trying to add InputManager",
+        "The file '",
+        "Could not find file",
+        "Unable to find script",
+        "NullReferenceException: Object reference not set to an instance of an object",
+    };
+
+    private static bool IsNoise(string condition)
+    {
+        foreach (var p in NoisePatterns)
+            if (condition.StartsWith(p, StringComparison.OrdinalIgnoreCase) ||
+                condition.Contains(p, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
+    private static bool IsRateLimited()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _crashLogWindowStart > CrashLogWindow)
+        {
+            _crashLogWindowStart = now;
+            _crashLogCount = 0;
+        }
+        _crashLogCount++;
+        return _crashLogCount > MaxCrashLogRate;
+    }
+
     private static void OnUnityLogMessage(string condition, string stackTrace, LogType type)
     {
-        if (type == LogType.Exception || type == LogType.Error || type == LogType.Assert)
-        {
-            WriteCrashLog($"[Unity {type}] {condition}");
+        if (type != LogType.Exception && type != LogType.Error && type != LogType.Assert)
+            return;
+
+        if (IsNoise(condition))
+            return;
+
+        if (IsRateLimited())
+            return;
+
+        WriteCrashLog($"[Unity {type}] {condition}");
+        if (type == LogType.Exception || stackTrace.Length > 50)
             WriteCrashLog(stackTrace);
-        }
+        else
+            WriteCrashLog("(no stack trace)");
     }
 
     private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -688,8 +740,16 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             var found = FindPlayer();
             if (found != null)
             {
+                var wasNull = _cachedPlayer == null;
                 _cachedPlayer = found;
                 _playerCacheTimer = PlayerCacheTimeout;
+
+                if (!_didPlayerDump || wasNull)
+                {
+                    _didPlayerDump = true;
+                    WriteLog($"[Weapon] Player hierarchy: \"{found.name}\" ({found.transform.childCount} children)");
+                    DumpTransformHierarchy(found.transform, "  ", 5);
+                }
             }
         }
         else
@@ -704,6 +764,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 {
                     WriteLog($"[Weapon] Camera.root changed to \"{camRoot.name}\" — re-acquiring player");
                     _cachedPlayer = null;
+                    _didPlayerDump = false;
                     _cachedPlayer = FindPlayer();
                     if (_cachedPlayer != null)
                         _playerCacheTimer = PlayerCacheTimeout;
@@ -737,25 +798,19 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if (equippedWeapon == null && _cachedCamera != null)
                 equippedWeapon = FindWeaponInHierarchy(_cachedCamera.transform);
 
-            // ── First scan: debug output ──
-            if (_firstScan)
+            // ── First scan: root hierarchy dump (only if player not found yet) ──
+            if (_firstScan && player == null)
             {
                 _firstScan = false;
-
-                if (player != null)
-                    WriteLog($"[Weapon] Player found: \"{player.name}\", children: {player.transform.childCount}");
-                else
+                WriteLog("[Weapon] Player not found — dumping root hierarchy:");
+                foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
                 {
-                    WriteLog("[Weapon] Player not found — dumping root hierarchy:");
-                    foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
-                    {
-                        if (obj == null || obj.transform.parent != null) continue;
-                        WriteLog($"[Weapon] - \"{obj.name}\" [A] ({obj.transform.childCount} children)");
-                    }
+                    if (obj == null || obj.transform.parent != null) continue;
+                    WriteLog($"[Weapon] - \"{obj.name}\" [A] ({obj.transform.childCount} children)");
                 }
-
-                WriteLog(_cachedCamera != null ? "[Weapon] MainCamera found" : "[Weapon] MainCamera not found (name=MainCamera)");
             }
+            else
+                _firstScan = false;
 
             // ── Equipped weapon state change ──
             if (equippedWeapon != _lastWeapon)
@@ -786,6 +841,12 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             {
                 _fireEffectCleanupTimer = FireEffectCleanupInterval;
                 _seenFireEffects.Clear();
+
+                if (_seenNpcNames.Count > 200)
+                    _seenNpcNames.Clear();
+
+                if (_seenGenerationEvents.Count > 200)
+                    _seenGenerationEvents.Clear();
             }
 
             bool checkFire = Config.LogWeapons;
@@ -804,22 +865,21 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 if (checkFire && _seenFireEffects.Add(name) && IsFireEffect(name, lower))
                     WriteLog($"[Weapon] FIRED: {name}");
 
-                if (checkNpcName && lower.Contains("name") && (lower.Contains("generated") || lower.Contains("gen_") || lower.Contains("_name")))
+                if (checkNpcName)
                 {
-                    if (name != _lastNpcNameGenerated)
+                    if ((lower.Contains("generatedname") || lower.Contains("npcname") || lower.Contains("_name")) &&
+                        _seenNpcNames.Add(name))
                     {
-                        _lastNpcNameGenerated = name;
                         WriteLog($"[NPC Name] Generated: \"{name}\"");
                     }
                 }
 
-                if (checkGen && (lower.Contains("generation") || lower.Contains("gen_") ||
-                    lower.Contains("spawner") || lower.Contains("population") ||
-                    lower.Contains("worldgen") || lower.Contains("procgen")))
+                if (checkGen)
                 {
-                    if (name != _lastGenerationEvent)
+                    if ((lower.Contains("generation") || lower.Contains("worldgen") ||
+                         lower.Contains("procgen") || lower.Contains("population") ||
+                         lower.StartsWith("gen_")) && _seenGenerationEvents.Add(name))
                     {
-                        _lastGenerationEvent = name;
                         WriteLog($"[Generation] Active: \"{name}\"");
                     }
                 }
@@ -843,9 +903,24 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         return null;
     }
 
+    private static void DumpTransformHierarchy(Transform t, string indent, int maxDepth)
+    {
+        if (maxDepth <= 0) return;
+        for (int i = 0; i < t.childCount; i++)
+        {
+            var child = t.GetChild(i);
+            var active = child.gameObject.activeInHierarchy ? "A" : "I";
+            var weaponTag = IsWeaponName(child.name) ? " [WPN]" : "";
+            GameEventLoggerMod.WriteLog($"{indent}\"{child.name}\" [{active}]{weaponTag} ({child.childCount} children)");
+            DumpTransformHierarchy(child, indent + "  ", maxDepth - 1);
+        }
+    }
+
     private static readonly string[] WeaponContains = {
         "weapon", "firearm", "holster", "rifle", "pistol", "shotgun",
-        "taser", "tazer", "flashlight", "stun", "wep_", "gun_"
+        "taser", "tazer", "flashlight", "stun", "wep_", "gun_",
+        "m4", "mp5", "ak47", "ar15", "deagle", "glock", "beretta",
+        "revolver", "magnum", "uzi", "smg", "carbine"
     };
 
     private static readonly string[] WeaponExact = { "bat", "knife", "tool", "item", "equipment", "gear", "gun" };
@@ -854,7 +929,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         "wheel", "pos_", "coll_", "mixamorig", "container", "group",
         "pool", "npc", "name", "database", "generation", "spawner",
         "char", "body", "bomb", "flame", "lod_", "level", "bip",
-        "weapons", "img_", "ui_", "icon_", "ammo-case"
+        "weapons", "img_", "ui_", "icon_", "ammo-case",
+        "background", "ground", "terrain", "building", "vehicle"
     };
 
     private static readonly string[] WeaponExcludeExact = {
@@ -868,6 +944,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     };
     private static readonly string[] FireEffectContains = {
         "muzzlefire", "case(", "_trail", "-taser", "impact"
+    };
+    private static readonly string[] FireEffectExclusions = {
+        "coll_", "ground", "background", "pos_", "data-",
+        "terrain", "building", "road", "decal", "decoration"
     };
 
     private static bool IsWeaponName(string name)
@@ -893,9 +973,9 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         lower ??= name.ToLowerInvariant();
 
-        if (lower.StartsWith("coll_") || lower.StartsWith("ground") || lower == "background" ||
-            lower == "bullets" || lower.StartsWith("pos_") || lower.StartsWith("data-"))
-            return false;
+        foreach (var x in FireEffectExclusions)
+            if (lower.StartsWith(x) || lower.Contains("_" + x) || lower.Contains("-" + x))
+                return false;
 
         foreach (var p in FireEffectPrefixes)
             if (lower.StartsWith(p) || lower.Contains("_" + p) || lower.Contains("-" + p))

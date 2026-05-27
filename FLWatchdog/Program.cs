@@ -164,6 +164,8 @@ else
 // ── Monitoring loop ──
 var hangStart = DateTime.MinValue;
 var lastResponding = true;
+var lastHangLog = DateTime.MinValue;
+var lastRecoveryLog = DateTime.MinValue;
 var started = DateTime.Now;
 
 Console.CancelKeyPress += (s, e) =>
@@ -194,18 +196,21 @@ while (gameProc != null && !gameProc.HasExited)
             hangStart = now;
             if (!silent)
                 Console.WriteLine($"[{now:HH:mm:ss}] WARNING: Game not responding");
-            WriteCrashLog(crashLogPath, $"[Watchdog] Game not responding — possible GPU hang/ TDR");
         }
-        else if ((now - hangStart).TotalSeconds >= HangThresholdSec)
+
+        var hangDuration = (now - hangStart).TotalSeconds;
+        if (hangDuration >= HangThresholdSec && (now - lastHangLog).TotalSeconds >= HangThresholdSec)
         {
+            lastHangLog = now;
             if (!silent)
-                Console.WriteLine($"[{now:HH:mm:ss}] CRITICAL: Game unresponsive for {(now - hangStart).TotalSeconds:F0}s");
-            WriteCrashLog(crashLogPath, $"[Watchdog] Game unresponsive for {(now - hangStart).TotalSeconds:F0}s — likely GPU crash");
-            hangStart = now; // Reset to avoid flooding
+                Console.WriteLine($"[{now:HH:mm:ss}] CRITICAL: Game unresponsive for {hangDuration:F0}s");
+            WriteCrashLog(crashLogPath, $"[Watchdog] Game unresponsive for {hangDuration:F0}s — possible GPU hang/TDR");
         }
     }
-    else if (!lastResponding)
+    else if (!lastResponding && (now - lastRecoveryLog).TotalSeconds >= 30)
     {
+        lastRecoveryLog = now;
+        hangStart = DateTime.MinValue;
         if (!silent)
             Console.WriteLine($"[{now:HH:mm:ss}] Game recovered from hang");
         WriteCrashLog(crashLogPath, $"[Watchdog] Game recovered from hang");
