@@ -33,43 +33,14 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
 
-
-    // ── Crash hooks ──
-    private static string? _crashLogPath;
-    private const string CrashLogName = "CrashLog.txt";
-    private Action<string, string, LogType>? _logCallback;
-    private static int _crashLogCount;
-    private static DateTime _crashLogWindowStart = DateTime.MinValue;
-    private const int MaxCrashLogRate = 50;
-
-    private static readonly string[] NoisePatterns =
-    {
-        "Releasing render texture that is set as Camera.targetTexture",
-        "Releasing render texture that is set to be Render Texture",
-        "The character controller does not support swimming",
-        "The referenced script on this Behaviour",
-        "Can't add component",
-        "Shader warning",
-        "D3D11: ID3D11DeviceContext::DrawIndexed",
-        "D3D11: Removing Device",
-        "Trying to add InputManager",
-        "The file '",
-        "Could not find file",
-        "Unable to find script",
-        "NullReferenceException",
-    };
-
     // ═══════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════
 
     protected override void OnModKitInitialized()
     {
-        SetupCrashHooks();
         CacheReflectionHandles();
         CachePanicAudioPaths();
-        MelonLogger.Msg($"[GameEventLogger] persistentDataPath: {Application.persistentDataPath}");
-        MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm active.");
     }
 
     protected override void OnModKitUpdate()
@@ -92,10 +63,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
-        if (_logCallback != null)
-            Application.remove_logMessageReceived(_logCallback);
-
-        MelonLogger.Msg("[GameEventLogger] Disabled.");
     }
 
     // ═══════════════════════════════════════════════════
@@ -325,28 +292,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
     }
 
-
-    // ═══════════════════════════════════════════════════
-    //  CRASH HOOKS
-    // ═══════════════════════════════════════════════════
-
-    private void SetupCrashHooks()
-    {
-        try
-        {
-            _crashLogPath = Path.Combine(FindGameRoot(), CrashLogName);
-            File.WriteAllText(_crashLogPath, $"=== Crash Log Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n");
-        }
-        catch { }
-
-        try
-        {
-            _logCallback = new Action<string, string, LogType>(OnUnityLogMessage);
-            Application.add_logMessageReceived(_logCallback);
-        }
-        catch { }
-    }
-
     private static string FindGameRoot()
     {
         try
@@ -365,41 +310,5 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
         catch { }
         return Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
-    }
-
-    private static bool IsNoise(string condition)
-    {
-        foreach (var p in NoisePatterns)
-            if (condition.StartsWith(p, StringComparison.OrdinalIgnoreCase) ||
-                condition.Contains(p, StringComparison.OrdinalIgnoreCase))
-                return true;
-        return false;
-    }
-
-    private static bool IsRateLimited()
-    {
-        var now = DateTime.UtcNow;
-        if (now - _crashLogWindowStart > TimeSpan.FromSeconds(30))
-        {
-            _crashLogWindowStart = now;
-            _crashLogCount = 0;
-        }
-        _crashLogCount++;
-        return _crashLogCount > MaxCrashLogRate;
-    }
-
-    private static void OnUnityLogMessage(string condition, string stackTrace, LogType type)
-    {
-        if (type != LogType.Exception && type != LogType.Error && type != LogType.Assert)
-            return;
-        if (IsNoise(condition) || IsRateLimited()) return;
-
-        try
-        {
-            File.AppendAllText(_crashLogPath!, $"[Unity {type}] {condition}\n");
-            if (type == LogType.Exception || stackTrace.Length > 50)
-                File.AppendAllText(_crashLogPath!, $"{stackTrace}\n");
-        }
-        catch { }
     }
 }
