@@ -23,6 +23,7 @@ public sealed class MDTUI
     private int _selectedCitationIndex = -1;
     private int _filingModeIndex;
     private string _chargeSearch = "";
+    private string _recordsSearch = "";
     private bool _showChargeDropdown = true;
     private string[] _cachedSubjects = Array.Empty<string>();
     private int _lastDataVersion = -1;
@@ -934,16 +935,16 @@ public sealed class MDTUI
             _cachedSubjects = NPCDataStore.GetSubjectNames();
         }
 
-        var npcRecords = NPCDataStore.GetNpcRecords();
-        bool hasNpcRecords = npcRecords.Count > 0;
-
         _boldLabel.normal.textColor = _accentColor;
         GUI.Label(new Rect(0, 5, width, 22), "SEARCH RECORDS:", _boldLabel);
 
         float y = 35;
         _labelStyle.normal.textColor = _textColor;
 
-        if (GUI.Button(new Rect(10, y, 160, 26), _showNewRecordForm ? "CANCEL NEW RECORD" : "MAKE NEW RECORD"))
+        GUI.Label(new Rect(10, y, 55, 22), "Name:", _labelStyle);
+        _recordsSearch = GUI.TextField(new Rect(70, y, width - 250, 22), _recordsSearch, _inputField);
+
+        if (GUI.Button(new Rect(width - 170, y, 160, 24), _showNewRecordForm ? "CANCEL NEW RECORD" : "MAKE NEW RECORD"))
         {
             _showNewRecordForm = !_showNewRecordForm;
             if (_showNewRecordForm)
@@ -958,54 +959,16 @@ public sealed class MDTUI
             y += 10;
         }
 
-        // NPC Info section at top
-        if (hasNpcRecords)
-        {
-            _catLabel.normal.textColor = _accentColor;
-            GUI.Label(new Rect(0, y, width, 18), $"-- CITIZEN DATABASE ({npcRecords.Count} records) --", _catLabel);
-            y += 22;
-
-            float npcY = y + 26;
-            int shown = 0;
-            int start = Math.Max(0, npcRecords.Count - 15);
-
-            for (int i = npcRecords.Count - 1; i >= start; i--)
-            {
-                var npc = npcRecords[i];
-                string status = "";
-                if (npc.IsWanted) status += " [WANTED]";
-                if (npc.IsMissing) status += " [MISSING]";
-
-                string line = $"{npc.Name} | Plate: {DisplayPlate(npc)} | Reg: {npc.RegistrationStatus} | Lic: {npc.LicenseStatus} | Weapon: {(npc.HasWeaponLicense || npc.HasFirearmsLicense ? "Y" : "N")}{status}";
-
-                Color itemColor = npc.IsWanted ? Color.red : npc.IsMissing ? Color.yellow : _textColor;
-                _npcStyle.normal.textColor = itemColor;
-                if (GUI.Button(new Rect(10, npcY, width - 20, 20), line, _npcStyle))
-                {
-                    var parts = npc.Name.Split(' ');
-                    _firstName = parts.Length > 0 ? parts[0] : "";
-                    _lastName = parts.Length > 1 ? string.Join(" ", parts.Skip(1)) : "";
-                    SetStatus($"Selected {npc.Name}");
-                }
-                npcY += 22;
-                shown++;
-                if (shown >= 15) break;
-            }
-
-            if (npcRecords.Count > 15)
-            {
-                _labelStyle.normal.textColor = _textColor;
-                GUI.Label(new Rect(10, npcY, width, 16), $"... and {npcRecords.Count - 15} more", _labelStyle);
-                npcY += 20;
-            }
-
-            y = npcY + 10;
-            GUI.DrawTexture(new Rect(0, y - 5, width, 1), _texLine);
-        }
-
         if (_cachedSubjects.Length == 0)
         {
             GUI.Label(new Rect(10, y, width, 20), "No records on file.", _labelStyle);
+            return;
+        }
+
+        string query = _recordsSearch.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            GUI.Label(new Rect(10, y, width, 20), "Type a name to search known records.", _labelStyle);
             return;
         }
 
@@ -1014,8 +977,26 @@ public sealed class MDTUI
         _recordsCitLabel.normal.textColor = _textColor;
         _recordsModifyBtn.normal.textColor = _accentColor;
 
-        foreach (var name in _cachedSubjects)
+        var matches = _cachedSubjects
+            .Where(name => name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(name => string.IsNullOrWhiteSpace(name) ? '#' : char.ToUpperInvariant(name[0]))
+            .ToList();
+
+        if (matches.Count == 0)
         {
+            GUI.Label(new Rect(10, y, width, 20), "No matching records.", _labelStyle);
+            return;
+        }
+
+        foreach (var group in matches)
+        {
+            _catLabel.normal.textColor = _accentColor;
+            GUI.Label(new Rect(0, y, width, 18), group.Key.ToString(), _catLabel);
+            y += 22;
+
+            foreach (var name in group)
+            {
             var charges = NPCDataStore.GetChargesForSubject(name);
             var citations = NPCDataStore.GetCitationsForSubject(name);
             var arrests = NPCDataStore.GetArrestsForSubject(name);
@@ -1137,6 +1118,7 @@ public sealed class MDTUI
             }
 
             y += 4;
+            }
         }
     }
 

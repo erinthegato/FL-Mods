@@ -104,10 +104,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private void PollPanicInput()
     {
         _weaponTimer -= Time.unscaledDeltaTime;
-        if (_weaponTimer <= 0f)
+        if (_weaponTimer <= 0f && (_cachedWeapon == null || !_cachedWeapon.gameObject.activeInHierarchy))
         {
             _weaponTimer = WeaponInterval;
-            DiscoverWeapon();
+            DiscoverWeapon(allowSceneCache: false);
         }
 
         if (_panicFired) return;
@@ -123,11 +123,23 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
         else
         {
+            if (Input.GetMouseButtonDown(0))
+            {
+                DiscoverWeapon(allowSceneCache: true);
+                if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy)
+                {
+                    _shotCount++;
+                    if (_shotCount >= Config.ShotsToPanic)
+                        FirePanic(_cachedWeapon.name);
+                    return;
+                }
+            }
+
             _shotCount = 0;
         }
     }
 
-    private void DiscoverWeapon()
+    private void DiscoverWeapon(bool allowSceneCache)
     {
         try
         {
@@ -152,7 +164,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                     _cachedWeapon = FindWeapon(cam.transform);
             }
 
-            if (_cachedWeapon == null)
+            if (_cachedWeapon == null && allowSceneCache)
                 _cachedWeapon = FindCachedSceneWeapon();
 
             if (_cachedWeapon == null)
@@ -184,7 +196,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private void RefreshWeaponCache()
     {
-        _nextWeaponCacheRefreshTime = Time.unscaledTime + 2.5f;
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + 12f;
         _weaponCandidates.Clear();
 
         var scene = SceneManager.GetActiveScene();

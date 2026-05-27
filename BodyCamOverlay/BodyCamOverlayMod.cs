@@ -23,9 +23,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override string ModId => "bodycam-overlay";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
-    internal const string KeyBindFile = "BodyCamOverlay.keybinds";
-
-    private const float WeaponPollInterval = 0.25f;
+    private const float WeaponPollInterval = 0.75f;
     private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
 
     private GameObject? _cachedPlayer;
@@ -49,8 +47,6 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     protected override void OnModKitInitialized()
     {
-        Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
-        Config.EmergencyTriggerKey = KeyBindStore.Load(KeyBindFile, nameof(Config.EmergencyTriggerKey), Config.EmergencyTriggerKey);
         _signalPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "AxonSignal.wav");
         EnsureSignalWav(_signalPath);
     }
@@ -67,7 +63,6 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override void OnModKitUpdate()
     {
         if (!Config.Enabled) return;
-        if (KeyBindWidget.IsCapturing) return;
 
         if (Input.GetKeyDown(Config.ToggleKey))
         {
@@ -91,13 +86,9 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     protected override void OnModKitGui()
     {
-        if (!Config.Enabled) return;
+        if (!Config.Enabled || !_overlayActive) return;
         EnsureStyles();
-
-        if (_overlayActive)
-            DrawOverlay();
-        else
-            DrawCollapsedKeyBind();
+        DrawOverlay();
     }
 
     private void ActivateOverlay()
@@ -234,7 +225,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private void RefreshWeaponCache()
     {
-        _nextWeaponCacheRefreshTime = Time.unscaledTime + 2.5f;
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + 12f;
         _weaponCandidates.Clear();
 
         var scene = SceneManager.GetActiveScene();
@@ -301,34 +292,6 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         GUI.Label(new Rect(x, y + 61, w, 20), Config.Agency.ToUpperInvariant(), _smallStyle);
         GUI.Label(new Rect(x, y + 84, w, 20), $"{Config.OfficerName.ToUpperInvariant()}  |  {Config.UnitId.ToUpperInvariant()}", _smallStyle);
 
-        Config.ToggleKey = KeyBindWidget.Draw(
-            new Rect(x, y + h + 8, 170, 22),
-            KeyBindFile,
-            nameof(Config.ToggleKey),
-            "Bodycam Toggle",
-            Config.ToggleKey);
-        Config.EmergencyTriggerKey = KeyBindWidget.Draw(
-            new Rect(x + 178, y + h + 8, 190, 22),
-            KeyBindFile,
-            nameof(Config.EmergencyTriggerKey),
-            "Emergency Trigger",
-            Config.EmergencyTriggerKey);
-    }
-
-    private void DrawCollapsedKeyBind()
-    {
-        Config.ToggleKey = KeyBindWidget.Draw(
-            new Rect(Screen.width - 200, 24, 176, 22),
-            KeyBindFile,
-            nameof(Config.ToggleKey),
-            "Bodycam Toggle",
-            Config.ToggleKey);
-        Config.EmergencyTriggerKey = KeyBindWidget.Draw(
-            new Rect(Screen.width - 200, 50, 176, 22),
-            KeyBindFile,
-            nameof(Config.EmergencyTriggerKey),
-            "Emergency Trigger",
-            Config.EmergencyTriggerKey);
     }
 
     private static void EnsureStyles()

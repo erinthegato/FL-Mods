@@ -40,6 +40,14 @@ Session progress:
 - Built and deployed GameEventLogger, MDTMod, and NPCAI successfully after the main feature work.
 - Committed and pushed the main feature work to GitHub as 17d032a.
 - Removed GameEventLogger background/crash logging hooks and CrashLog.txt writes, leaving only essential panic/dispatch logging.
+- Added press-to-rebind hotkey controls across BackgroundRadio, GrammarPolice, MDT, and NPCAI, with Escape cancelling binding.
+- Stabilized NPCAI proximity checks and reduced FPS stutter by replacing broad object scans with throttled scene caches.
+- Optimized GameEventLogger panic detection and audio lookup, including cached WAV lists and throttled weapon discovery.
+- Added BodyCamOverlay with manual toggle, weapon-draw activation, rapid key-2 activation, generated Axon-style signal audio, and configurable repeat interval.
+- Added AssetLoader for Unity AssetBundles from E:\SteamLibrary\steamapps\common\Flashing Lights\UserData\FLMods\Assets.
+- Fixed BodyCamOverlay and AssetLoader MelonLoader registration so they load as mods.
+- Fixed GrammarPolice speech-recognition dependency failure so it no longer floods the log every frame.
+- Built, deployed, committed, and pushed the latest bodycam, asset-loader, panic-trigger, and performance fixes to GitHub as 3eb7419.
 
 Current working tree:
 $status

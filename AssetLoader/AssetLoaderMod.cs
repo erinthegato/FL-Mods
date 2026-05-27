@@ -18,15 +18,12 @@ public sealed class AssetLoaderMod : ModKitMelonMod<AssetLoaderConfig>
     protected override string ModId => "fl-asset-loader";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
-    internal const string KeyBindFile = "AssetLoader.keybinds";
-
     private readonly List<AssetBundle> _bundles = new();
     private readonly List<GameObject> _instances = new();
     private string _assetRoot = "";
 
     protected override void OnModKitInitialized()
     {
-        Config.ReloadKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ReloadKey), Config.ReloadKey);
         _assetRoot = Path.Combine(FindGameRoot(), "UserData", "FLMods", "Assets");
         Directory.CreateDirectory(_assetRoot);
 
@@ -36,20 +33,9 @@ public sealed class AssetLoaderMod : ModKitMelonMod<AssetLoaderConfig>
 
     protected override void OnModKitUpdate()
     {
-        if (!Config.Enabled || KeyBindWidget.IsCapturing) return;
+        if (!Config.Enabled) return;
         if (Input.GetKeyDown(Config.ReloadKey))
             ReloadBundles();
-    }
-
-    protected override void OnModKitGui()
-    {
-        if (!Config.Enabled) return;
-        Config.ReloadKey = KeyBindWidget.Draw(
-            new Rect(24, Screen.height - 46, 190, 22),
-            KeyBindFile,
-            nameof(Config.ReloadKey),
-            "Reload Assets",
-            Config.ReloadKey);
     }
 
     protected override void OnModKitDisabled()
