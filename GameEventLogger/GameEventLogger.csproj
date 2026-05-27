@@ -5,8 +5,9 @@
     <Nullable>enable</Nullable>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <NoWarn>CA1416</NoWarn>
-    <MelonLoaderNet6>$(GameRoot)\MelonLoader\net6\</MelonLoaderNet6>
-    <Il2CppAssemblies>$(GameRoot)\MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
+    <GameRoot>E:\SteamLibrary\steamapps\common\Flashing Lights\</GameRoot>
+    <MelonLoaderNet6>$(GameRoot)MelonLoader\net6\</MelonLoaderNet6>
+    <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">

@@ -35,7 +35,6 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     private float _courtTimer;
     private int _courtIntervalMinutes;
     private HarmonyLib.Harmony? _harmony;
-    private readonly List<Behaviour> _frozenComponents = new();
 
     protected override void OnModKitInitialized()
     {
@@ -131,7 +130,6 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             Time.timeScale = 0f;
-            FreezeCamera();
         }
         else
         {
@@ -142,7 +140,6 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     private void RestoreCursor()
     {
         Time.timeScale = 1f;
-        UnfreezeCamera();
         if (_cursorWasLocked)
         {
             Cursor.lockState = CursorLockMode.Locked;
@@ -153,50 +150,6 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
-    }
-
-    private void FreezeCamera()
-    {
-        _frozenComponents.Clear();
-        var go = GameObject.Find("Main Camera");
-        if (go == null)
-        {
-            var cams = GameObject.FindObjectsOfType<Camera>(true);
-            if (cams != null && cams.Length > 0) go = cams[0].gameObject;
-        }
-        if (go == null) return;
-        DisableAllBehaviours(go);
-        if (go.transform.parent != null)
-        {
-            DisableAllBehaviours(go.transform.parent.gameObject);
-            for (int i = 0; i < go.transform.parent.childCount; i++)
-            {
-                var s = go.transform.parent.GetChild(i);
-                if (s == go.transform) continue;
-                DisableAllBehaviours(s.gameObject);
-            }
-        }
-    }
-
-    private void DisableAllBehaviours(GameObject obj)
-    {
-        foreach (var c in obj.GetComponents<Behaviour>())
-        {
-            if (c == null || !c.enabled) continue;
-            string name;
-            try { name = c.GetIl2CppType()?.FullName ?? c.GetType().Name; } catch { name = c.GetType().Name; }
-            if (name.Contains("Camera") || name.Contains("AudioListener") || name.Contains("FlareLayer") || name.Contains("GUILayer"))
-                continue;
-            c.enabled = false;
-            _frozenComponents.Add(c);
-        }
-    }
-
-    private void UnfreezeCamera()
-    {
-        foreach (var c in _frozenComponents)
-            if (c != null) c.enabled = true;
-        _frozenComponents.Clear();
     }
 }
 

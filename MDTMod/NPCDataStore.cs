@@ -34,6 +34,16 @@ public sealed record CourtVerdict(
 
 public sealed record WitnessStatement(string Name, string Statement);
 
+public sealed record NPCInfo(
+    string Name,
+    string Registration,
+    bool HasInsurance,
+    bool HasFirearmsLicense,
+    bool IsWanted,
+    bool IsMissing,
+    DateTime DetectedAt
+);
+
 public sealed record ArrestRecord(
     string Id,
     string SubjectName,
@@ -52,6 +62,7 @@ public static class NPCDataStore
     private static readonly List<Citation> Citations = new();
     private static readonly List<NPCCharge> Charges = new();
     private static readonly List<ArrestRecord> Arrests = new();
+    private static readonly List<NPCInfo> NpcRecords = new();
     private static int _nextId;
 
     private static readonly string? _dataSavePath;
@@ -63,6 +74,7 @@ public static class NPCDataStore
         List<Citation> Citations,
         List<NPCCharge> Charges,
         List<ArrestRecord> Arrests,
+        List<NPCInfo> NpcRecords,
         int NextId
     );
 
@@ -84,7 +96,7 @@ public static class NPCDataStore
         if (_dataSavePath == null) return;
         try
         {
-            var data = new DataSnapshot(Citations, Charges, Arrests, _nextId);
+            var data = new DataSnapshot(Citations, Charges, Arrests, NpcRecords, _nextId);
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_dataSavePath, json);
         }
@@ -105,6 +117,8 @@ public static class NPCDataStore
             Charges.AddRange(data.Charges);
             Arrests.Clear();
             Arrests.AddRange(data.Arrests);
+            NpcRecords.Clear();
+            NpcRecords.AddRange(data.NpcRecords);
             _nextId = data.NextId;
         }
         catch { }
@@ -228,6 +242,32 @@ public static class NPCDataStore
 
     public static ArrestRecord? FindArrest(string id) =>
         Arrests.Find(a => a.Id == id);
+
+    // ── NPC Records ──
+
+    public static void AddNpcRecord(NPCInfo info)
+    {
+        NpcRecords.Add(info);
+        SaveData();
+    }
+
+    public static IReadOnlyList<NPCInfo> GetNpcRecords() => NpcRecords.AsReadOnly();
+
+    public static List<NPCInfo> SearchNpcRecords(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return new List<NPCInfo>(NpcRecords);
+        return NpcRecords.FindAll(r =>
+            r.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
+    }
+
+    public static bool RemoveNpcRecord(string name)
+    {
+        int removed = NpcRecords.RemoveAll(r =>
+            r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (removed > 0) SaveData();
+        return removed > 0;
+    }
 
     private static readonly Dictionary<string, string> SubjectPhotos = new();
 

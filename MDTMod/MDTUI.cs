@@ -21,7 +21,8 @@ public sealed class MDTUI
     private float _statusTimer;
     private int _selectedChargeIndex = -1;
     private int _selectedCitationIndex = -1;
-    private string _searchQuery = "";
+    private string[] _cachedSubjects = Array.Empty<string>();
+    private float _subjectsTimer;
     private bool _chargeSubjectSelected;
     private PhotoBrowser _photoBrowser = new();
     private bool _photoBrowserVisible;
@@ -70,6 +71,15 @@ public sealed class MDTUI
     private static GUIStyle _clockStyle = null!;
     private static GUIStyle _tabBtn = null!;
     private static GUIStyle _statusStyle = null!;
+    private static GUIStyle _recordsBtn = null!;
+    private static GUIStyle _recordsModifyBtn = null!;
+    private static GUIStyle _recordsChargeLabel = null!;
+    private static GUIStyle _recordsCitLabel = null!;
+    private static GUIStyle _recordsArrestLabel = null!;
+    private static GUIStyle _sugStyle = null!;
+    private static GUIStyle _subjectBtnStyle = null!;
+    private static GUIStyle _removeStyle = null!;
+    private static GUIStyle _npcStyle = null!;
     private static bool _stylesInit;
 
     private static void InitTex(ref Texture2D tex)
@@ -115,6 +125,15 @@ public sealed class MDTUI
         _clockStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, alignment = TextAnchor.MiddleRight };
         _tabBtn = new GUIStyle(GUI.skin.button) { fontSize = 13, alignment = TextAnchor.MiddleCenter, hover = { textColor = Color.white } };
         _statusStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold, normal = { textColor = Color.white }, alignment = TextAnchor.MiddleCenter };
+        _recordsBtn = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft, hover = { textColor = Color.white } };
+        _recordsModifyBtn = new GUIStyle(GUI.skin.button) { fontSize = 10, fontStyle = FontStyle.Bold, hover = { textColor = Color.white } };
+        _recordsChargeLabel = new GUIStyle(GUI.skin.label) { fontSize = 10 };
+        _recordsCitLabel = new GUIStyle(GUI.skin.label) { fontSize = 10 };
+        _recordsArrestLabel = new GUIStyle(GUI.skin.label) { fontSize = 10, fontStyle = FontStyle.Italic };
+        _sugStyle = new GUIStyle(GUI.skin.button) { fontSize = 11, alignment = TextAnchor.MiddleLeft, hover = { textColor = Color.white } };
+        _subjectBtnStyle = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft, hover = { textColor = Color.white } };
+        _removeStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
+        _npcStyle = new GUIStyle(GUI.skin.button) { fontSize = 11, alignment = TextAnchor.MiddleLeft, hover = { textColor = Color.white } };
 
         _chargeBtn.normal.textColor = textColor;
         _chargeBtn.hover.textColor = Color.white;
@@ -336,7 +355,6 @@ public sealed class MDTUI
                 {
                     _scrollPos = Vector2.zero;
                     _chargeSubjectSelected = false;
-                    _searchQuery = "";
                     _firstName = "";
                     _lastName = "";
                     _selectedChargeIndex = -1;
@@ -370,10 +388,11 @@ public sealed class MDTUI
             float sugStart = 30;
             float sugCount = Math.Max(fnSug.Count, lnSug.Count);
 
-            var sugStyle = new GUIStyle(GUI.skin.button) { fontSize = 11, alignment = TextAnchor.MiddleLeft, normal = { textColor = _textColor, background = HighlightTex(_accentColor * 0.3f) }, hover = { textColor = Color.white } };
+            _sugStyle.normal.textColor = _textColor;
+            _sugStyle.normal.background = HighlightTex(_accentColor * 0.3f);
             for (int i = 0; i < fnSug.Count; i++)
             {
-                if (GUI.Button(new Rect(85, sugStart + i * 19, 160, 18), fnSug[i], sugStyle))
+                if (GUI.Button(new Rect(85, sugStart + i * 19, 160, 18), fnSug[i], _sugStyle))
                 {
                     _firstName = fnSug[i];
                     GUI.FocusControl(null);
@@ -381,7 +400,7 @@ public sealed class MDTUI
             }
             for (int i = 0; i < lnSug.Count; i++)
             {
-                if (GUI.Button(new Rect(340, sugStart + i * 19, 160, 18), lnSug[i], sugStyle))
+                if (GUI.Button(new Rect(340, sugStart + i * 19, 160, 18), lnSug[i], _sugStyle))
                 {
                     _lastName = lnSug[i];
                     GUI.FocusControl(null);
@@ -409,10 +428,10 @@ public sealed class MDTUI
             }
             else
             {
-                var btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft, normal = { textColor = _textColor }, hover = { textColor = Color.white } };
+            _subjectBtnStyle.normal.textColor = _textColor;
                 foreach (var name in subjects)
                 {
-                    if (GUI.Button(new Rect(10, y, width - 20, 22), name, btnStyle))
+                    if (GUI.Button(new Rect(10, y, width - 20, 22), name, _subjectBtnStyle))
                     {
                         var parts = name.Split(' ');
                         _firstName = parts.Length > 0 ? parts[0] : "";
@@ -550,7 +569,6 @@ public sealed class MDTUI
             GUI.Label(new Rect(0, yPos, width, 22), "PENDING CHARGES:", _boldLabel);
             yPos += 28;
 
-            var removeStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
             for (int i = 0; i < _pendingCharges.Count; i++)
             {
                 var pc = _pendingCharges[i];
@@ -563,7 +581,7 @@ public sealed class MDTUI
                 };
                 string line = $"  {i + 1}. [{cls}] {pc.Name}";
                 GUI.Label(new Rect(10, yPos, width - 100, 18), line, _labelStyle);
-                if (GUI.Button(new Rect(width - 90, yPos, 80, 18), "REMOVE", removeStyle))
+                if (GUI.Button(new Rect(width - 90, yPos, 80, 18), "REMOVE", _removeStyle))
                 {
                     _pendingCharges.RemoveAt(i);
                     SetStatus($"Removed: {pc.Name}");
@@ -628,13 +646,12 @@ public sealed class MDTUI
         }
         y += 28;
 
-        var removeWitStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
-        for (int i = 0; i < _arrestWitnesses.Count; i++)
-        {
-            var w = _arrestWitnesses[i];
-            string line = $"  {w.Name} — {w.Statement}";
-            GUI.Label(new Rect(10, y, width - 100, 18), line, _labelStyle);
-            if (GUI.Button(new Rect(width - 90, y, 80, 18), "REMOVE", removeWitStyle))
+            for (int i = 0; i < _arrestWitnesses.Count; i++)
+            {
+                var w = _arrestWitnesses[i];
+                string line = $"  {w.Name} — {w.Statement}";
+                GUI.Label(new Rect(10, y, width - 100, 18), line, _labelStyle);
+                if (GUI.Button(new Rect(width - 90, y, 80, 18), "REMOVE", _removeStyle))
             {
                 _arrestWitnesses.RemoveAt(i);
                 SetStatus("Witness removed.");
@@ -718,7 +735,6 @@ public sealed class MDTUI
         _chargeSubjectSelected = false;
         _pendingCharges.Clear();
         _selectedChargeIndex = -1;
-        _searchQuery = "";
         _firstName = "";
         _lastName = "";
         _showArrestNarrative = false;
@@ -822,8 +838,10 @@ public sealed class MDTUI
         }
         else
         {
-            foreach (var r in ruled.TakeLast(20))
+            int start2 = Math.Max(0, ruled.Count - 20);
+            for (int i = ruled.Count - 1; i >= start2; i--)
             {
+                var r = ruled[i];
                 var v = r.Verdict!;
                 Color c = v.Outcome switch
                 {
@@ -835,49 +853,101 @@ public sealed class MDTUI
                 string line = $"{r.SubjectName,-18} {r.Charge.Name,-38} -> {v.Outcome,-12}" +
                               (v.Fine > 0 ? $" ${v.Fine}" : "") +
                               (v.JailDays > 0 ? $" {v.JailDays}d" : "");
-                GUI.Label(new Rect(10, y2, width - 20, 18), line, new GUIStyle(GUI.skin.label)
-                    { normal = { textColor = c } });
+                _recordsChargeLabel.normal.textColor = c;
+                GUI.Label(new Rect(10, y2, width - 20, 18), line, _recordsChargeLabel);
                 y2 += 20;
             }
 
+            _recordsArrestLabel.normal.textColor = _textColor;
             GUI.Label(new Rect(10, y2 + 5, width, 18),
                 $"Auto-court runs every {MDTMod.Instance.CourtIntervalMinutesConfig} min (config.txt overrides).",
-                new GUIStyle(GUI.skin.label) { fontSize = 10, fontStyle = FontStyle.Italic, normal = { textColor = _textColor } });
+                _recordsArrestLabel);
         }
     }
 
     private void RenderRecordsTab(float width)
     {
-        var subjects = NPCDataStore.GetSubjectNames();
+        _subjectsTimer += Time.unscaledDeltaTime;
+        if (_subjectsTimer >= 2f || _cachedSubjects.Length == 0)
+        {
+            _subjectsTimer = 0;
+            _cachedSubjects = NPCDataStore.GetSubjectNames();
+        }
+
+        var npcRecords = NPCDataStore.GetNpcRecords();
+        bool hasNpcRecords = npcRecords.Count > 0;
+
         _boldLabel.normal.textColor = _accentColor;
         GUI.Label(new Rect(0, 5, width, 22), "SEARCH RECORDS:", _boldLabel);
 
         float y = 35;
         _labelStyle.normal.textColor = _textColor;
-        if (subjects.Length == 0)
+
+        // NPC Info section at top
+        if (hasNpcRecords)
+        {
+            _catLabel.normal.textColor = _accentColor;
+            GUI.Label(new Rect(0, y, width, 18), $"-- CITIZEN DATABASE ({npcRecords.Count} records) --", _catLabel);
+            y += 22;
+
+            float npcY = y + 26;
+            int shown = 0;
+            int start = Math.Max(0, npcRecords.Count - 15);
+
+            for (int i = npcRecords.Count - 1; i >= start; i--)
+            {
+                var npc = npcRecords[i];
+                string status = "";
+                if (npc.IsWanted) status += " [WANTED]";
+                if (npc.IsMissing) status += " [MISSING]";
+
+                string line = $"{npc.Name,-22} Plate: {npc.Registration,-10} Ins: {(npc.HasInsurance ? "Y" : "N")} " +
+                              $"Firearm: {(npc.HasFirearmsLicense ? "Y" : "N")}{status}";
+
+                Color itemColor = npc.IsWanted ? Color.red : npc.IsMissing ? Color.yellow : _textColor;
+                _npcStyle.normal.textColor = itemColor;
+                if (GUI.Button(new Rect(10, npcY, width - 20, 20), line, _npcStyle))
+                {
+                    var parts = npc.Name.Split(' ');
+                    _firstName = parts.Length > 0 ? parts[0] : "";
+                    _lastName = parts.Length > 1 ? string.Join(" ", parts.Skip(1)) : "";
+                    SetStatus($"Selected {npc.Name}");
+                }
+                npcY += 22;
+                shown++;
+                if (shown >= 15) break;
+            }
+
+            if (npcRecords.Count > 15)
+            {
+                _labelStyle.normal.textColor = _textColor;
+                GUI.Label(new Rect(10, npcY, width, 16), $"... and {npcRecords.Count - 15} more", _labelStyle);
+                npcY += 20;
+            }
+
+            y = npcY + 10;
+            GUI.DrawTexture(new Rect(0, y - 5, width, 1), _texLine);
+        }
+
+        if (_cachedSubjects.Length == 0)
         {
             GUI.Label(new Rect(10, y, width, 20), "No records on file.", _labelStyle);
             return;
         }
 
-        var btnStyle = new GUIStyle(GUI.skin.button)
-        {
-            fontSize = 12, alignment = TextAnchor.MiddleLeft,
-            hover = { textColor = Color.white }
-        };
+        _recordsBtn.normal.textColor = _textColor;
+        _recordsChargeLabel.normal.textColor = _textColor;
+        _recordsCitLabel.normal.textColor = _textColor;
+        _recordsModifyBtn.normal.textColor = _accentColor;
 
-        var chargeLabel = new GUIStyle(GUI.skin.label) { fontSize = 10 };
-        var citLabel = new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = _textColor } };
-
-        foreach (var name in subjects)
+        foreach (var name in _cachedSubjects)
         {
             var charges = NPCDataStore.GetChargesForSubject(name);
             var citations = NPCDataStore.GetCitationsForSubject(name);
             var arrests = NPCDataStore.GetArrestsForSubject(name);
             string summary = $"{name,-22} Charges: {charges.Count}  Citations: {citations.Count}  Arrests: {arrests.Count}";
 
-            btnStyle.normal.textColor = _textColor;
-            if (GUI.Button(new Rect(10, y, width - 100, 22), summary, btnStyle))
+            if (GUI.Button(new Rect(10, y, width - 100, 22), summary, _recordsBtn))
             {
                 _scrollPos = Vector2.zero;
                 var parts = name.Split(' ');
@@ -889,13 +959,7 @@ public sealed class MDTUI
                 SetStatus($"Viewing records for {name}");
             }
 
-            var modifyBtnStyle = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 10, fontStyle = FontStyle.Bold,
-                normal = { textColor = _accentColor },
-                hover = { textColor = Color.white }
-            };
-            if (GUI.Button(new Rect(width - 80, y, 70, 22), "MODIFY", modifyBtnStyle))
+            if (GUI.Button(new Rect(width - 80, y, 70, 22), "MODIFY", _recordsModifyBtn))
             {
                 var parts = name.Split(' ');
                 _modifySubjectName = name;
@@ -917,9 +981,7 @@ public sealed class MDTUI
                 y += ph + 4;
             }
             else
-            {
                 photoRightX = 30;
-            }
 
             foreach (var ch in charges)
             {
@@ -931,47 +993,47 @@ public sealed class MDTUI
                     "Plea Bargain" => Color.yellow,
                     _ => Color.gray
                 };
-                chargeLabel.normal.textColor = c;
+                _recordsChargeLabel.normal.textColor = c;
                 GUI.Label(new Rect(photoRightX, y, width - photoRightX - 10, 16),
-                    $"  * {ch.Charge.Name,-38} [{v}]", chargeLabel);
+                    $"  * {ch.Charge.Name,-38} [{v}]", _recordsChargeLabel);
                 y += 18;
             }
 
             foreach (var cit in citations)
             {
                 GUI.Label(new Rect(photoRightX, y, width - photoRightX - 10, 16),
-                    $"  # {cit.Charge.Name,-38} ${cit.Charge.FineMin}-${cit.Charge.FineMax}", citLabel);
+                    $"  # {cit.Charge.Name,-38} ${cit.Charge.FineMin}-${cit.Charge.FineMax}", _recordsCitLabel);
                 y += 18;
             }
 
             foreach (var a in arrests)
             {
-                var arrestLabel = new GUIStyle(GUI.skin.label) { fontSize = 10, fontStyle = FontStyle.Italic, normal = { textColor = _accentColor } };
+                _recordsArrestLabel.normal.textColor = _accentColor;
                 GUI.Label(new Rect(photoRightX, y, width - photoRightX - 10, 16),
-                    $"  ARREST: {a.ArrestedAt:MM/dd/yyyy HH:mm} at {(string.IsNullOrEmpty(a.Location) ? "N/A" : a.Location)}", arrestLabel);
+                    $"  ARREST: {a.ArrestedAt:MM/dd/yyyy HH:mm} at {(string.IsNullOrEmpty(a.Location) ? "N/A" : a.Location)}", _recordsArrestLabel);
                 y += 16;
                 if (!string.IsNullOrEmpty(a.NatureOfArrest))
                 {
                     GUI.Label(new Rect(photoRightX + 10, y, width - photoRightX - 20, 16),
-                        $"  Nature: {a.NatureOfArrest}", citLabel);
+                        $"  Nature: {a.NatureOfArrest}", _recordsCitLabel);
                     y += 16;
                 }
                 if (!string.IsNullOrEmpty(a.DOB))
                 {
                     GUI.Label(new Rect(photoRightX + 10, y, width - photoRightX - 20, 16),
-                        $"  DOB: {a.DOB}", citLabel);
+                        $"  DOB: {a.DOB}", _recordsCitLabel);
                     y += 16;
                 }
                 if (!string.IsNullOrEmpty(a.LicensePlate))
                 {
                     GUI.Label(new Rect(photoRightX + 10, y, width - photoRightX - 20, 16),
-                        $"  Plate: {a.LicensePlate}", citLabel);
+                        $"  Plate: {a.LicensePlate}", _recordsCitLabel);
                     y += 16;
                 }
                 if (a.Witnesses.Count > 0)
                 {
                     GUI.Label(new Rect(photoRightX + 10, y, width - photoRightX - 20, 16),
-                        $"  Witnesses: {string.Join(", ", a.Witnesses.Select(w => w.Name))}", citLabel);
+                        $"  Witnesses: {string.Join(", ", a.Witnesses.Select(w => w.Name))}", _recordsCitLabel);
                     y += 16;
                 }
                 y += 4;
@@ -1035,14 +1097,13 @@ public sealed class MDTUI
         }
         else
         {
-            var removeStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
             for (int i = 0; i < charges.Count; i++)
             {
                 var c = charges[i];
                 string v = c.Verdict?.Outcome ?? "PENDING";
                 string line = $"  {c.Charge.Name,-38} [{v}]  Filed: {c.FiledAt:MM/dd HH:mm}";
                 GUI.Label(new Rect(dataX + 5, y, w - (dataX - x) - 95, 16), line, _labelStyle);
-                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", removeStyle))
+                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", _removeStyle))
                 {
                     NPCDataStore.RemoveCharge(c.Id);
                     SetStatus($"Removed charge: {c.Charge.Name}");
@@ -1063,13 +1124,12 @@ public sealed class MDTUI
         }
         else
         {
-            var removeStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
             for (int i = 0; i < citations.Count; i++)
             {
                 var ct = citations[i];
                 string line = $"  {ct.Charge.Name,-38} ${ct.Charge.FineMin}-${ct.Charge.FineMax}  Issued: {ct.IssuedAt:MM/dd HH:mm}";
                 GUI.Label(new Rect(dataX + 5, y, w - (dataX - x) - 95, 16), line, _labelStyle);
-                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", removeStyle))
+                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", _removeStyle))
                 {
                     NPCDataStore.RemoveCitation(ct.Id);
                     SetStatus($"Removed citation: {ct.Charge.Name}");
@@ -1090,13 +1150,12 @@ public sealed class MDTUI
         }
         else
         {
-            var removeStyle = new GUIStyle(GUI.skin.button) { fontSize = 10, normal = { textColor = Color.red }, hover = { textColor = Color.white } };
             for (int i = 0; i < arrests.Count; i++)
             {
                 var a = arrests[i];
                 string line = $"  {a.ArrestedAt:MM/dd/yyyy HH:mm} at {(string.IsNullOrEmpty(a.Location) ? "N/A" : a.Location)}";
                 GUI.Label(new Rect(dataX + 5, y, w - (dataX - x) - 95, 16), line, _labelStyle);
-                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", removeStyle))
+                if (GUI.Button(new Rect(dataX + w - (dataX - x) - 85, y, 80, 16), "REMOVE", _removeStyle))
                 {
                     NPCDataStore.RemoveArrest(a.Id);
                     SetStatus("Arrest record removed.");

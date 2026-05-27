@@ -1,3 +1,4 @@
+using FlashingLights.ModKit.Core;
 using UnityEngine;
 
 namespace GameEventLogger;
