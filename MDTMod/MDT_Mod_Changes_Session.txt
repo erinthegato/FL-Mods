@@ -1,0 +1,97 @@
+============================================================================
+MDT Mod - Changes Session
+Date: 2026-05-26
+============================================================================
+
+FILES MODIFIED:
+  1. NPCDataStore.cs
+  2. MDTUI.cs
+
+============================================================================
+NPCDataStore.cs - All Changes
+============================================================================
+
+1. Added new data models:
+   - WitnessStatement(string Name, string Statement)
+   - ArrestRecord(string Id, string SubjectName, DateTime ArrestedAt,
+       string Location, string NatureOfArrest, string DOB, string LicensePlate,
+       List<WitnessStatement> Witnesses, string ArrestingOfficer,
+       List<string> ChargeIds)
+
+2. Added persistent data storage:
+   - _dataSavePath field pointing to mdt_data.json alongside the DLL
+   - DataSnapshot record for serialization of all in-memory data
+   - SaveData() / LoadData() methods using System.Text.Json
+   - Static constructor now loads both data and photos on init
+
+3. Existing methods updated to auto-save on mutation:
+   - IssueCitation() - now calls SaveData() after adding citation
+   - FileCharge() - now calls SaveData() after adding charge
+   - ApplyVerdict() - now calls SaveData() after updating verdict
+
+4. GetSubjectNames() updated to include ArrestRecord subjects.
+
+5. Added new methods:
+   - FileArrest(ArrestRecord) - generates ID, adds to list, saves
+   - GetArrestsForSubject(string name) - returns arrests for a subject
+   - GetAllArrests() - returns all arrest records
+
+============================================================================
+MDTUI.cs - All Changes
+============================================================================
+
+1. Added arrest workflow fields:
+   - _pendingCharges (List<USCharge>) - charges queued before confirmation
+   - _showArrestNarrative (bool) - toggles the narrative GUI
+   - _arrestLocation, _arrestNature, _arrestDOB, _arrestLicense
+   - _witnessName, _witnessStatement, _arrestWitnesses (List<WitnessStatement>)
+
+2. RenderChargesTab() - Completely rewritten flow:
+   Subject Selection -> Charge Selection -> Arrest Narrative -> Save
+
+   Subject selection (unchanged UI):
+   - Name entry with autocomplete suggestions
+   - Existing subjects list for quick selection
+
+   Charge selection (new multi-charge flow):
+   - "FILING AGAINST: <name>" header with PHOTO and CHANGE buttons
+   - Officer name text field visible
+   - Pending charges count shown in header
+   - Charge category list with single-click highlight
+   - "ADD CHARGE" button - adds highlighted charge to pending list
+   - "CONFIRM ARREST" button (only when pending > 0) - opens narrative GUI
+   - Pending charges list with "REMOVE" buttons
+
+3. RenderArrestNarrative() - New method for the arrest details form:
+   - Subject name displayed (read-only)
+   - Officer name field
+   - Location field
+   - DOB field
+   - License Plate field
+   - Nature of Arrest text area
+   - Witnesses section: Name + Statement fields, ADD button
+   - List of added witnesses with REMOVE buttons
+   - Total charges to file counter
+   - "CONFIRM & SAVE" button - files all charges, creates ArrestRecord
+   - "BACK" button - returns to charge selection without saving
+
+4. ClearArrestState() / ClearChargeState() - Helper methods to reset form
+
+5. DrawTabs() - Updated to call ClearArrestState() on tab switch
+
+6. RenderRecordsTab() - Updated:
+   - Summary line now includes arrest count
+   - Displays arrest narrative details per subject:
+     Date/time, location, nature, DOB, license plate, witnesses
+
+7. Scroll view content height increased from 300/400 to 1200 to
+   accommodate the expanded charges tab content.
+
+============================================================================
+NEW FILES (generated at runtime):
+  - mdt_data.json (auto-created in Mods folder on first save)
+
+DEPLOYMENT:
+  Build output: C:\Users\joshy\OneDrive\Documents\FL MODS\MDTMod\bin\Release\net6.0-windows\
+  Deployed to: E:\SteamLibrary\steamapps\common\Flashing Lights\Mods\
+============================================================================

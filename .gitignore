@@ -1,0 +1,20 @@
+# Build artifacts
+**/bin/
+**/obj/
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+
+# VS files
+.vs/
+*.csproj.user
+*.suo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Logs
+EventLog.txt
+CrashLog.txt

@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GameRoot>E:\SteamLibrary\steamapps\common\Flashing Lights\</GameRoot>
+    <ModKitRoot>$(MSBuildProjectDirectory)\Lib\</ModKitRoot>
+    <MelonLoaderNet6>$(GameRoot)MelonLoader\net6\</MelonLoaderNet6>
+    <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="FlashingLights.ModKit.Core">
+      <HintPath>..\GrammarPoliceMod\Lib\FlashingLights.ModKit.Core.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MelonLoader">
+      <HintPath>$(MelonLoaderNet6)MelonLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(MelonLoaderNet6)0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(MelonLoaderNet6)Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(Il2CppAssemblies)Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(Il2CppAssemblies)Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="CopyConfig" AfterTargets="Build">
+    <Copy SourceFiles="config.txt" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('config.txt')" />
+  </Target>
+  <Target Name="DeployToMods" AfterTargets="Build">
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)FlashingLights.ModKit.Core.dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="config.txt" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" Condition="Exists('config.txt')" />
+  </Target>
+</Project>
