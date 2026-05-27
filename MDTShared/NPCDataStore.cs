@@ -12,7 +12,8 @@ public sealed record Citation(
     string SubjectName,
     USCharge Charge,
     DateTime IssuedAt,
-    string IssuingOfficer
+    string IssuingOfficer,
+    string? SubjectRegistration = null
 );
 
 public sealed record NPCCharge(
@@ -21,7 +22,8 @@ public sealed record NPCCharge(
     USCharge Charge,
     DateTime FiledAt,
     string FiledBy,
-    CourtVerdict? Verdict
+    CourtVerdict? Verdict,
+    string? SubjectRegistration = null
 );
 
 public sealed record CourtVerdict(
@@ -54,7 +56,8 @@ public sealed record ArrestRecord(
     string LicensePlate,
     List<WitnessStatement> Witnesses,
     string ArrestingOfficer,
-    List<string> ChargeIds
+    List<string> ChargeIds,
+    string? SubjectRegistration = null
 );
 
 public static class NPCDataStore
@@ -85,6 +88,9 @@ public static class NPCDataStore
     {
         try
         {
+            // When running in-game, this DLL is deployed to the game's `UserLibs` folder.
+            // Using the executing assembly directory ensures we read/write the same
+            // persisted `mdt_data.json` that the game/mod environment generates.
             string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
             _dataSavePath = Path.Combine(dir, "mdt_data.json");
             _photoSavePath = Path.Combine(dir, "mdt_photos.json");
@@ -128,17 +134,17 @@ public static class NPCDataStore
         catch { }
     }
 
-    public static Citation IssueCitation(string subject, USCharge charge, string officer)
+    public static Citation IssueCitation(string subject, USCharge charge, string officer, string? subjectRegistration = null)
     {
-        var cit = new Citation(NextId(), subject, charge, DateTime.Now, officer);
+        var cit = new Citation(NextId(), subject, charge, DateTime.Now, officer, subjectRegistration);
         Citations.Add(cit);
         SaveData();
         return cit;
     }
 
-    public static NPCCharge FileCharge(string subject, USCharge charge, string officer)
+    public static NPCCharge FileCharge(string subject, USCharge charge, string officer, string? subjectRegistration = null)
     {
-        var nc = new NPCCharge(NextId(), subject, charge, DateTime.Now, officer, null);
+        var nc = new NPCCharge(NextId(), subject, charge, DateTime.Now, officer, null, subjectRegistration);
         Charges.Add(nc);
         SaveData();
         return nc;
@@ -152,11 +158,11 @@ public static class NPCDataStore
 
     public static List<NPCCharge> GetChargesForSubject(string name) =>
         Charges.FindAll(c =>
-            c.SubjectName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            IsSubjectMatch(c.SubjectName, c.SubjectRegistration, name));
 
     public static List<Citation> GetCitationsForSubject(string name) =>
         Citations.FindAll(c =>
-            c.SubjectName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            IsSubjectMatch(c.SubjectName, c.SubjectRegistration, name));
 
     public static void ApplyVerdict(NPCCharge charge, CourtVerdict verdict)
     {
@@ -187,7 +193,7 @@ public static class NPCDataStore
 
     public static List<ArrestRecord> GetArrestsForSubject(string name) =>
         Arrests.FindAll(a =>
-            a.SubjectName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            IsSubjectMatch(a.SubjectName, a.SubjectRegistration, name));
 
     public static IReadOnlyList<ArrestRecord> GetAllArrests() => Arrests.AsReadOnly();
 
@@ -252,7 +258,27 @@ public static class NPCDataStore
 
     public static void AddNpcRecord(NPCInfo info)
     {
-        NpcRecords.Add(info);
+        // Keep NPC records in sync across repeated scene scans by upserting on registration first,
+        // then falling back to name when no registration is available.
+        int idx = -1;
+        if (!string.IsNullOrWhiteSpace(info.Registration))
+        {
+            idx = NpcRecords.FindIndex(r =>
+                !string.IsNullOrWhiteSpace(r.Registration) &&
+                r.Registration.Equals(info.Registration, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (idx < 0)
+        {
+            idx = NpcRecords.FindIndex(r =>
+                r.Name.Equals(info.Name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (idx >= 0)
+            NpcRecords[idx] = info;
+        else
+            NpcRecords.Add(info);
+
         SaveData();
     }
 
@@ -276,6 +302,12 @@ public static class NPCDataStore
 
     public static NPCInfo? FindNpcRecord(string name) =>
         NpcRecords.Find(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    public static NPCInfo? FindLatestNpcRecord(string name) =>
+        NpcRecords
+            .Where(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(r => r.DetectedAt)
+            .FirstOrDefault();
 
     private static readonly Dictionary<string, string> SubjectPhotos = new();
 
@@ -314,5 +346,16 @@ public static class NPCDataStore
                 SubjectPhotos[kv.Key] = kv.Value;
         }
         catch { }
+    }
+
+    private static bool IsSubjectMatch(string subjectName, string? subjectRegistration, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return false;
+
+        string trimmedQuery = query.Trim();
+        return subjectName.Equals(trimmedQuery, StringComparison.OrdinalIgnoreCase)
+               || (!string.IsNullOrWhiteSpace(subjectRegistration)
+                   && subjectRegistration.Equals(trimmedQuery, StringComparison.OrdinalIgnoreCase));
     }
 }

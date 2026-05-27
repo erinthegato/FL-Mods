@@ -692,11 +692,12 @@ public sealed class MDTUI
             }
 
             string fullName = $"{_firstName} {_lastName}".Trim();
+            string? subjectRegistration = ResolveSubjectRegistration(fullName, _arrestLicense);
             var filedChargeIds = new List<string>();
 
             foreach (var charge in _pendingCharges)
             {
-                var nc = NPCDataStore.FileCharge(fullName, charge, _officerName);
+                var nc = NPCDataStore.FileCharge(fullName, charge, _officerName, subjectRegistration);
                 filedChargeIds.Add(nc.Id);
             }
 
@@ -710,7 +711,8 @@ public sealed class MDTUI
                 _arrestLicense,
                 new List<WitnessStatement>(_arrestWitnesses),
                 _officerName,
-                filedChargeIds
+                filedChargeIds,
+                subjectRegistration
             );
             NPCDataStore.FileArrest(arrest);
 
@@ -758,6 +760,18 @@ public sealed class MDTUI
         _arrestWitnesses.Clear();
         _witnessName = "";
         _witnessStatement = "";
+    }
+
+    private static string? ResolveSubjectRegistration(string fullName, string? fallbackRegistration = null)
+    {
+        if (!string.IsNullOrWhiteSpace(fallbackRegistration))
+            return fallbackRegistration.Trim();
+
+        var latestNpc = NPCDataStore.FindLatestNpcRecord(fullName);
+        if (latestNpc == null || string.IsNullOrWhiteSpace(latestNpc.Registration))
+            return null;
+
+        return latestNpc.Registration.Trim();
     }
 
     private void RenderCitationsTab(float width)
@@ -812,7 +826,8 @@ public sealed class MDTUI
             {
                 string fullName = $"{_firstName} {_lastName}".Trim();
                 var charge = USCharges.All[_selectedCitationIndex];
-                NPCDataStore.IssueCitation(fullName, charge, _officerName);
+                string? subjectRegistration = ResolveSubjectRegistration(fullName);
+                NPCDataStore.IssueCitation(fullName, charge, _officerName, subjectRegistration);
                 SetStatus($"Citation issued: {charge.Name} to {fullName}");
             }
         }

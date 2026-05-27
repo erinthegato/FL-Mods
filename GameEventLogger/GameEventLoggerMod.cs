@@ -38,6 +38,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private GameObject[] _cachedRoots = Array.Empty<GameObject>();
     private int _rootsVersion;
     private int _lastRootCount;
+    private bool _loggedPlayMakerSnapshotForScene;
+    private float _nextPlayMakerNameSyncTime;
+    private const float PlayMakerNameSyncInterval = 5f;
+    private readonly HashSet<string> _syncedPlayMakerNames = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Panic overlay ──
     private float _panicFlashTimer;
@@ -46,10 +50,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private MethodInfo? _playPanicTone;
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
-    private object? _flSaveDataInstance;
-    private System.Type? _flSaveDataType;
-    private bool _flSaveDataSearched;
-    private readonly HarmonyLib.Harmony _flSaveDataHarmony = new("GameEventLogger.FlSaveData");
+    private readonly HarmonyLib.Harmony _playMakerNameHarmony = new("GameEventLogger.PlayMakerNames");
 
     // ── Crash hooks ──
     private static string? _crashLogPath;
@@ -85,6 +86,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         LoadNameFiles();
         SetupCrashHooks();
         CacheReflectionHandles();
+        InstallPlayMakerNameHooks();
         MelonLogger.Msg($"[GameEventLogger] persistentDataPath: {Application.persistentDataPath}");
         MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm + MDT NPC records active.");
     }
@@ -96,6 +98,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         if (Config.NpcRecordEnabled)
         {
+            SyncNpcRecordsFromPlayMakerDatabase();
+
             _sceneTimer -= Time.unscaledDeltaTime;
             if (_sceneTimer <= 0f)
             {
@@ -121,7 +125,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
-        _flSaveDataHarmony.UnpatchSelf();
+        _playMakerNameHarmony.UnpatchSelf();
 
         if (_logCallback != null)
             Application.remove_logMessageReceived(_logCallback);
@@ -380,6 +384,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if (handle != _rootsVersion)
             {
                 _rootsVersion = handle;
+                _loggedPlayMakerSnapshotForScene = false;
                 _cachedRoots = scene.GetRootGameObjects();
                 if (_cachedRoots.Length != _lastRootCount)
                 {
@@ -462,7 +467,17 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private void CreateNpcRecord(GameObject sourceObj)
     {
-        string? npcName = ExtractNpcNameFromScene(sourceObj);
+        bool capturePmDebug = !_loggedPlayMakerSnapshotForScene;
+        var pmData = TryExtractNpcDataFromPlayMaker(sourceObj, capturePmDebug);
+        if (capturePmDebug)
+        {
+            LogPlayMakerSnapshot(sourceObj, pmData);
+            _loggedPlayMakerSnapshotForScene = true;
+        }
+
+        string? npcName = pmData.Name;
+        if (string.IsNullOrEmpty(npcName))
+            npcName = ExtractNpcNameFromScene(sourceObj);
         if (string.IsNullOrEmpty(npcName))
             npcName = GenerateNpcName();
         if (string.IsNullOrEmpty(npcName))
@@ -470,24 +485,11 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         MelonLogger.Msg($"[GameEventLogger] Creating NPC record: {npcName}");
 
-        string reg = "";
-        bool insurance = false;
-        bool firearmsLicense = false;
-        bool wanted = false;
-        bool missing = false;
-
-        var saveData = TryReadFlSaveData(npcName);
-        if (saveData != null)
-        {
-            if (!string.IsNullOrEmpty(saveData.Registration)) reg = saveData.Registration;
-            insurance = saveData.HasInsurance;
-            firearmsLicense = saveData.HasFirearmsLicense;
-            wanted = saveData.IsWanted;
-            missing = saveData.IsMissing;
-            MelonLogger.Msg($"[GameEventLogger] FlSaveData found for {npcName}: plate={reg}");
-        }
-        else
-            MelonLogger.Msg($"[GameEventLogger] No FlSaveData for {npcName}");
+        string reg = pmData.Registration ?? "";
+        bool insurance = pmData.HasInsurance ?? false;
+        bool firearmsLicense = pmData.HasFirearmsLicense ?? false;
+        bool wanted = pmData.IsWanted ?? false;
+        bool missing = pmData.IsMissing ?? false;
 
         if (Config.RandomizeNpcData && string.IsNullOrEmpty(reg) && !insurance && !firearmsLicense && !wanted && !missing)
         {
@@ -499,6 +501,361 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
 
         NPCDataStore.AddNpcRecord(new NPCInfo(npcName, reg, insurance, firearmsLicense, wanted, missing, DateTime.Now));
+    }
+
+    private sealed class PlayMakerNpcData
+    {
+        public string? Name;
+        public string? Registration;
+        public bool? HasInsurance;
+        public bool? HasFirearmsLicense;
+        public bool? IsWanted;
+        public bool? IsMissing;
+        public readonly List<string> StringVarDebug = new();
+        public readonly List<string> BoolVarDebug = new();
+    }
+
+    private static PlayMakerNpcData TryExtractNpcDataFromPlayMaker(GameObject sourceObj, bool captureDebug)
+    {
+        var result = new PlayMakerNpcData();
+        try
+        {
+            if (sourceObj == null) return result;
+            VisitTransformsForPlayMaker(sourceObj.transform, 0, result, captureDebug);
+        }
+        catch { }
+        return result;
+    }
+
+    private static void VisitTransformsForPlayMaker(Transform t, int depth, PlayMakerNpcData result, bool captureDebug)
+    {
+        if (depth > 4) return;
+        TryExtractFromComponents(t.gameObject, result, captureDebug);
+        for (int i = 0; i < t.childCount; i++)
+        {
+            var child = t.GetChild(i);
+            if (child == null) continue;
+            VisitTransformsForPlayMaker(child, depth + 1, result, captureDebug);
+        }
+    }
+
+    private static void TryExtractFromComponents(GameObject go, PlayMakerNpcData result, bool captureDebug)
+    {
+        Component[] comps;
+        try { comps = go.GetComponents<Component>(); }
+        catch { return; }
+
+        foreach (var comp in comps)
+        {
+            if (comp == null) continue;
+            var ct = comp.GetType();
+            string fullName = ct.FullName ?? "";
+            string typeName = ct.Name;
+
+            if (!fullName.Contains("PlayMaker", StringComparison.OrdinalIgnoreCase) &&
+                !typeName.Contains("PlayMaker", StringComparison.OrdinalIgnoreCase) &&
+                !typeName.Contains("Fsm", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            object? varsObj = ct.GetProperty("FsmVariables", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(comp)
+                              ?? ct.GetField("FsmVariables", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(comp);
+            if (varsObj == null) continue;
+
+            ExtractStringVars(varsObj, result, captureDebug);
+            ExtractBoolVars(varsObj, result, captureDebug);
+        }
+    }
+
+    private static void ExtractStringVars(object varsObj, PlayMakerNpcData result, bool captureDebug)
+    {
+        foreach (var item in EnumeratePlayMakerCollection(varsObj, "StringVariables", "stringVariables", "FsmStrings"))
+        {
+            string key = GetMemberString(item, "Name", "name", "Key", "key");
+            string value = GetMemberString(item, "Value", "value", "Text", "text");
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value)) continue;
+
+            string k = key.ToLowerInvariant();
+            string v = value.Trim();
+            if (captureDebug && result.StringVarDebug.Count < 20)
+                result.StringVarDebug.Add($"{key}={v}");
+
+            if (string.IsNullOrWhiteSpace(result.Registration) &&
+                (k.Contains("registration") || k.Contains("licenseplate") || k.EndsWith("plate")))
+                result.Registration = v;
+
+            if (string.IsNullOrWhiteSpace(result.Name) &&
+                (k.Contains("fullname") || k.Contains("npcname") || k.EndsWith("name")) &&
+                LooksLikeNpcName(v))
+                result.Name = v;
+        }
+    }
+
+    private static void ExtractBoolVars(object varsObj, PlayMakerNpcData result, bool captureDebug)
+    {
+        foreach (var item in EnumeratePlayMakerCollection(varsObj, "BoolVariables", "boolVariables", "FsmBools"))
+        {
+            string key = GetMemberString(item, "Name", "name", "Key", "key");
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            if (!TryGetMemberBool(item, out bool value, "Value", "value")) continue;
+
+            string k = key.ToLowerInvariant();
+            if (captureDebug && result.BoolVarDebug.Count < 20)
+                result.BoolVarDebug.Add($"{key}={value}");
+            if (result.HasInsurance == null && (k.Contains("insurance") || k.Contains("hasinsurance")))
+                result.HasInsurance = value;
+            else if (result.HasFirearmsLicense == null && (k.Contains("firearm") || k.Contains("weaponlicense")))
+                result.HasFirearmsLicense = value;
+            else if (result.IsWanted == null && k.Contains("wanted"))
+                result.IsWanted = value;
+            else if (result.IsMissing == null && k.Contains("missing"))
+                result.IsMissing = value;
+        }
+    }
+
+    private static void LogPlayMakerSnapshot(GameObject sourceObj, PlayMakerNpcData data)
+    {
+        string src = sourceObj != null ? sourceObj.name : "<null>";
+        MelonLogger.Msg($"[GameEventLogger] PlayMaker snapshot source={src}");
+        MelonLogger.Msg($"[GameEventLogger] PM resolved: name='{data.Name ?? ""}', plate='{data.Registration ?? ""}', ins={data.HasInsurance?.ToString() ?? "null"}, firearm={data.HasFirearmsLicense?.ToString() ?? "null"}, wanted={data.IsWanted?.ToString() ?? "null"}, missing={data.IsMissing?.ToString() ?? "null"}");
+
+        if (data.StringVarDebug.Count == 0 && data.BoolVarDebug.Count == 0)
+        {
+            MelonLogger.Msg("[GameEventLogger] PM vars: none found on scanned components.");
+            return;
+        }
+
+        foreach (var line in data.StringVarDebug)
+            MelonLogger.Msg($"[GameEventLogger] PM string: {line}");
+        foreach (var line in data.BoolVarDebug)
+            MelonLogger.Msg($"[GameEventLogger] PM bool: {line}");
+    }
+
+    private void InstallPlayMakerNameHooks()
+    {
+        try
+        {
+            var postfix = new HarmonyMethod(typeof(GameEventLoggerMod)
+                .GetMethod(nameof(PlayMakerNameActionPostfix), BindingFlags.NonPublic | BindingFlags.Static));
+
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.GetName2", postfix,
+                "OnEnter", "OnUpdate", "DoGetGameObjectName");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.SetName", postfix,
+                "OnEnter", "DoSetLayer");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.BuildString", postfix,
+                "OnEnter", "OnUpdate", "DoBuildString");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.SetStringValue", postfix,
+                "OnEnter", "OnUpdate", "DoSetStringValue");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.SelectRandomString", postfix,
+                "OnEnter", "DoSelectRandomString");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.ArrayListGetRandom", postfix,
+                "OnEnter", "GetRandomItem");
+            PatchPlayMakerAction("HutongGames.PlayMaker.Actions.ArrayGetRandom", postfix,
+                "OnEnter", "OnUpdate", "DoGetRandomValue");
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Warning($"[GameEventLogger] PlayMaker name hooks failed: {ex.Message}");
+        }
+    }
+
+    private void PatchPlayMakerAction(string typeName, HarmonyMethod postfix, params string[] methodNames)
+    {
+        var type = System.Type.GetType($"{typeName}, Assembly-CSharp");
+        if (type == null) return;
+
+        int patched = 0;
+        foreach (string methodName in methodNames)
+        {
+            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method == null) continue;
+
+            try
+            {
+                _playMakerNameHarmony.Patch(method, postfix: postfix);
+                patched++;
+            }
+            catch { }
+        }
+
+        if (patched > 0)
+            MelonLogger.Msg($"[GameEventLogger] PlayMaker name hook installed: {typeName} ({patched})");
+    }
+
+    private static void PlayMakerNameActionPostfix(object __instance)
+    {
+        try
+        {
+            var mod = Melon<GameEventLoggerMod>.Instance;
+            if (mod == null || !mod.Config.NpcRecordEnabled || __instance == null) return;
+
+            string source = __instance.GetType().FullName ?? __instance.GetType().Name;
+            foreach (string fieldName in new[]
+                     {
+                         "storeResult", "storeName", "storeString", "name",
+                         "stringVariable", "stringValue", "randomItem", "storeValue"
+                     })
+            {
+                string value = GetMemberString(__instance, fieldName);
+                if (LooksLikeNpcName(value))
+                    mod.RegisterPlayMakerNpcName(value, source);
+            }
+        }
+        catch { }
+    }
+
+    private void SyncNpcRecordsFromPlayMakerDatabase()
+    {
+        if (Time.unscaledTime < _nextPlayMakerNameSyncTime) return;
+        _nextPlayMakerNameSyncTime = Time.unscaledTime + PlayMakerNameSyncInterval;
+
+        try
+        {
+            int imported = 0;
+            var objects = Resources.FindObjectsOfTypeAll<GameObject>();
+            foreach (var go in objects)
+            {
+                if (go == null) continue;
+                if (!go.scene.IsValid()) continue;
+
+                var pmData = TryExtractNpcDataFromPlayMaker(go, false);
+                if (RegisterPlayMakerNpcName(pmData.Name, $"PlayMakerFSM:{go.name}", log: false))
+                    imported++;
+
+                if (IsNpcNameContext(go) && RegisterPlayMakerNpcName(go.name, $"GameObject:{go.name}", log: false))
+                    imported++;
+            }
+
+            if (imported > 0)
+                MelonLogger.Msg($"[GameEventLogger] Synced {imported} NPC names from PlayMaker scene state.");
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Warning($"[GameEventLogger] PlayMaker name sync failed: {ex.Message}");
+        }
+    }
+
+    private bool RegisterPlayMakerNpcName(string? npcName, string source, bool log = true)
+    {
+        npcName = NormalizeNpcName(npcName);
+        if (!LooksLikeNpcName(npcName)) return false;
+        if (!_syncedPlayMakerNames.Add(npcName)) return false;
+
+        string reg = "";
+        bool insurance = false;
+        bool firearmsLicense = false;
+        bool wanted = false;
+        bool missing = false;
+
+        if (Config.RandomizeNpcData)
+        {
+            reg = GeneratePlate();
+            insurance = UnityEngine.Random.value > 0.15f;
+            firearmsLicense = UnityEngine.Random.value > 0.65f;
+            wanted = UnityEngine.Random.value < 0.10f;
+            missing = UnityEngine.Random.value < 0.04f;
+        }
+
+        NPCDataStore.AddNpcRecord(new NPCInfo(npcName, reg, insurance, firearmsLicense, wanted, missing, DateTime.Now));
+        if (log)
+            MelonLogger.Msg($"[GameEventLogger] PlayMaker NPC name synced: {npcName} ({source})");
+        return true;
+    }
+
+    private static string NormalizeNpcName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var parts = value.Trim()
+            .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(" ", parts);
+    }
+
+    private static bool IsNpcNameContext(GameObject go)
+    {
+        try
+        {
+            var t = go.transform;
+            for (int depth = 0; t != null && depth < 4; depth++, t = t.parent)
+            {
+                string n = t.name;
+                if (n.Contains("NPC", StringComparison.OrdinalIgnoreCase) ||
+                    n.Contains("AI-Names", StringComparison.OrdinalIgnoreCase) ||
+                    n.Contains("generated", StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("Names", StringComparison.OrdinalIgnoreCase) ||
+                    n.Equals("Npcs", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        catch { }
+
+        return false;
+    }
+
+    private static IEnumerable<object> EnumeratePlayMakerCollection(object owner, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            object? collection = owner.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner)
+                               ?? owner.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner);
+            if (collection is System.Collections.IEnumerable enumerable)
+            {
+                foreach (var item in enumerable)
+                    if (item != null) yield return item;
+                yield break;
+            }
+        }
+    }
+
+    private static string GetMemberString(object obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            object? val = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(obj)
+                         ?? obj.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(obj);
+            if (val == null) continue;
+
+            // PlayMaker often wraps values in FsmString with a nested Value field/property.
+            object? nested = val.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(val)
+                          ?? val.GetType().GetField("Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(val);
+            string text = (nested ?? val).ToString() ?? "";
+            if (!string.IsNullOrWhiteSpace(text))
+                return text;
+        }
+        return "";
+    }
+
+    private static bool TryGetMemberBool(object obj, out bool value, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            object? val = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(obj)
+                         ?? obj.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(obj);
+            if (val == null) continue;
+
+            if (val is bool b)
+            {
+                value = b;
+                return true;
+            }
+
+            object? nested = val.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(val)
+                          ?? val.GetType().GetField("Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(val);
+            if (nested is bool nb)
+            {
+                value = nb;
+                return true;
+            }
+        }
+
+        value = false;
+        return false;
+    }
+
+    private static bool LooksLikeNpcName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (value.Length < 3 || value.Length > 50) return false;
+        if (!value.Contains(' ')) return false;
+        return value.Any(char.IsLetter);
     }
 
     private static string? ExtractNpcNameFromScene(GameObject sourceObj)
@@ -553,11 +910,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private FlSaveDataResult? TryReadFlSaveData(string npcName)
     {
-        if (_flSaveDataInstance == null && !_flSaveDataSearched)
-        {
-            _flSaveDataSearched = true;
-            DiscoverFlSaveData();
-        }
+        EnsureFlSaveDataDiscovery();
 
         if (_flSaveDataInstance == null || _flSaveDataType == null) return null;
 
@@ -612,6 +965,126 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             MelonLogger.Warning($"[GameEventLogger] FlSaveData read failed: {ex.Message}");
             return null;
         }
+    }
+
+    private void EnsureFlSaveDataDiscovery()
+    {
+        if (_flSaveDataInstance != null && _flSaveDataType != null) return;
+        if (Time.unscaledTime < _nextFlSaveDataSearchTime) return;
+
+        _nextFlSaveDataSearchTime = Time.unscaledTime + 5f;
+        DiscoverFlSaveData();
+    }
+
+    private sealed class FlNpcSeed
+    {
+        public string Name = "";
+        public string Registration = "";
+        public bool HasInsurance;
+        public bool HasFirearmsLicense;
+        public bool IsWanted;
+        public bool IsMissing;
+    }
+
+    private void SyncNpcRecordsFromFlSaveData()
+    {
+        if (_flSaveDataInstance == null || _flSaveDataType == null) return;
+        if (Time.unscaledTime < _nextFlSaveDataSyncTime) return;
+        _nextFlSaveDataSyncTime = Time.unscaledTime + 5f;
+
+        try
+        {
+            var map = new Dictionary<string, FlNpcSeed>(StringComparer.OrdinalIgnoreCase);
+
+            var stringsField = _flSaveDataType.GetField("serializableStrings", BindingFlags.Public | BindingFlags.Instance);
+            if (stringsField?.GetValue(_flSaveDataInstance) is System.Collections.IList stringsList)
+            {
+                foreach (var entry in stringsList)
+                {
+                    if (entry == null) continue;
+                    var et = entry.GetType();
+                    var key = et.GetField("Key")?.GetValue(entry) as string ?? "";
+                    var val = et.GetField("Value")?.GetValue(entry) as string ?? "";
+                    if (!TryParseNpcSaveKey(key, out string npcName, out string fieldName)) continue;
+
+                    var seed = GetOrCreateSeed(map, npcName);
+                    if ((fieldName.Contains("registration") || fieldName.Contains("licenseplate") || fieldName.EndsWith("plate")) &&
+                        !string.IsNullOrWhiteSpace(val))
+                    {
+                        seed.Registration = val;
+                    }
+                }
+            }
+
+            var boolsField = _flSaveDataType.GetField("serializableBools", BindingFlags.Public | BindingFlags.Instance);
+            if (boolsField?.GetValue(_flSaveDataInstance) is System.Collections.IList boolsList)
+            {
+                foreach (var entry in boolsList)
+                {
+                    if (entry == null) continue;
+                    var et = entry.GetType();
+                    var key = et.GetField("Key")?.GetValue(entry) as string ?? "";
+                    bool val = et.GetField("Value")?.GetValue(entry) is bool b && b;
+                    if (!TryParseNpcSaveKey(key, out string npcName, out string fieldName)) continue;
+
+                    var seed = GetOrCreateSeed(map, npcName);
+                    if (fieldName.EndsWith("insurance") || fieldName.EndsWith("hasinsurance")) seed.HasInsurance = val;
+                    else if (fieldName.EndsWith("firearmslicense") || fieldName.EndsWith("hasfirearm")) seed.HasFirearmsLicense = val;
+                    else if (fieldName.EndsWith("wanted") || fieldName.EndsWith("iswanted")) seed.IsWanted = val;
+                    else if (fieldName.EndsWith("missing") || fieldName.EndsWith("ismissing")) seed.IsMissing = val;
+                }
+            }
+
+            int imported = 0;
+            foreach (var seed in map.Values)
+            {
+                if (string.IsNullOrWhiteSpace(seed.Name)) continue;
+                NPCDataStore.AddNpcRecord(new NPCInfo(
+                    seed.Name,
+                    seed.Registration,
+                    seed.HasInsurance,
+                    seed.HasFirearmsLicense,
+                    seed.IsWanted,
+                    seed.IsMissing,
+                    DateTime.Now));
+                imported++;
+            }
+
+            if (imported > 0)
+                MelonLogger.Msg($"[GameEventLogger] Synced {imported} NPC records from FlSaveData.");
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Warning($"[GameEventLogger] FlSaveData sync failed: {ex.Message}");
+        }
+    }
+
+    private static FlNpcSeed GetOrCreateSeed(Dictionary<string, FlNpcSeed> map, string npcName)
+    {
+        if (!map.TryGetValue(npcName, out var seed))
+        {
+            seed = new FlNpcSeed { Name = npcName };
+            map[npcName] = seed;
+        }
+        return seed;
+    }
+
+    private static bool TryParseNpcSaveKey(string key, out string npcName, out string fieldName)
+    {
+        npcName = "";
+        fieldName = "";
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        string lower = key.ToLowerInvariant();
+        if (!lower.StartsWith("npc_")) return false;
+
+        int lastUnderscore = key.LastIndexOf('_');
+        if (lastUnderscore <= 4 || lastUnderscore >= key.Length - 1) return false;
+
+        fieldName = key[(lastUnderscore + 1)..].ToLowerInvariant();
+        string rawName = key.Substring(4, lastUnderscore - 4);
+        npcName = rawName.Replace('_', ' ').Trim();
+        return npcName.Length > 0;
     }
 
     private void DiscoverFlSaveData()
@@ -699,7 +1172,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                         _flSaveDataHarmony.Patch(ctor, postfix: new HarmonyMethod(typeof(GameEventLoggerMod)
                             .GetMethod(nameof(FlSaveDataCtorPostfix), BindingFlags.NonPublic | BindingFlags.Static)));
                         MelonLogger.Msg($"[GameEventLogger] Harmony hook installed on FlSaveData.ctor()");
-                        _flSaveDataSearched = true; // don't retry — hook will catch future creations
                         return;
                     }
 
