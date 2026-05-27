@@ -135,31 +135,28 @@ public sealed class RadioUI
         _overlayDuration = seconds;
     }
 
-    public void HandleKeyboard()
+    public void HandleKeyboard(GrammarPoliceConfig config)
     {
         var ev = Event.current;
         if (ev.type != EventType.KeyDown) return;
 
-        switch (ev.keyCode)
+        if (ev.keyCode == config.RadioNavigateUpKey)
         {
-            case KeyCode.UpArrow:
-                _selectedIndex = (_selectedIndex - 1 + Items.Length) % Items.Length;
-                ScrollToSelected();
-                ev.Use();
-                break;
-
-            case KeyCode.DownArrow:
-                _selectedIndex = (_selectedIndex + 1) % Items.Length;
-                ScrollToSelected();
-                ev.Use();
-                break;
-
-            case KeyCode.Return:
-            case KeyCode.Space:
-                var item = Items[_selectedIndex];
-                Dispatch(item.Code, item.Description);
-                ev.Use();
-                break;
+            _selectedIndex = (_selectedIndex - 1 + Items.Length) % Items.Length;
+            ScrollToSelected();
+            ev.Use();
+        }
+        else if (ev.keyCode == config.RadioNavigateDownKey)
+        {
+            _selectedIndex = (_selectedIndex + 1) % Items.Length;
+            ScrollToSelected();
+            ev.Use();
+        }
+        else if (ev.keyCode == config.RadioSelectKey)
+        {
+            var item = Items[_selectedIndex];
+            Dispatch(item.Code, item.Description);
+            ev.Use();
         }
     }
 
@@ -175,10 +172,11 @@ public sealed class RadioUI
             _scrollPos.y = targetY + itemH - viewH;
     }
 
-    public void RenderPanel(Rect rect, CommandEngine engine)
+    public void RenderPanel(Rect rect, CommandEngine engine, GrammarPoliceConfig config)
     {
         InitStyles();
-        HandleKeyboard();
+        if (!KeyBindWidget.IsCapturing)
+            HandleKeyboard(config);
 
         GUI.Box(rect, "");
 
@@ -201,7 +199,8 @@ public sealed class RadioUI
         GUI.Label(hintRect, hint);
 
         float contentY = rect.y + 76;
-        float contentH = rect.height - 80;
+        float keyY = rect.y + rect.height - 74;
+        float contentH = rect.height - 154;
         _itemsViewHeight = contentH;
 
         GUILayout.BeginArea(new Rect(rect.x + 5, contentY, rect.width - 10, contentH));
@@ -234,6 +233,22 @@ public sealed class RadioUI
 
         GUILayout.EndScrollView();
         GUILayout.EndArea();
+
+        DrawKeyBinds(rect, config, keyY);
+    }
+
+    private static void DrawKeyBinds(Rect rect, GrammarPoliceConfig config, float y)
+    {
+        float x = rect.x + 6;
+        float w = (rect.width - 18) / 2f;
+        config.RadioUIToggleKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.RadioUIToggleKey), "Radio UI", config.RadioUIToggleKey);
+        config.PushToTalkKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.PushToTalkKey), "PTT", config.PushToTalkKey);
+        y += 22;
+        config.PanicTriggerKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.PanicTriggerKey), "Panic", config.PanicTriggerKey);
+        config.RadioSelectKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.RadioSelectKey), "Radio Select", config.RadioSelectKey);
+        y += 22;
+        config.RadioNavigateUpKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.RadioNavigateUpKey), "Radio Up", config.RadioNavigateUpKey);
+        config.RadioNavigateDownKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), GrammarPoliceMod.KeyBindFile, nameof(config.RadioNavigateDownKey), "Radio Down", config.RadioNavigateDownKey);
     }
 
     public void RenderOverlay()

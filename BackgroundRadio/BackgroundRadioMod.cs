@@ -19,6 +19,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
     protected override string ModId => "background-radio";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
+    internal const string KeyBindFile = "BackgroundRadio.keybinds";
 
     internal static BackgroundRadioMod Instance { get; private set; } = null!;
 
@@ -49,6 +50,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         _broadcastify = new BroadcastifyService();
         _audioPlayer = new AudioPlayer();
         _radioUI = new RadioUI();
+        LoadKeyBinds();
 
         _offlineDir = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(typeof(BackgroundRadioMod).Assembly.Location)!,
@@ -133,6 +135,15 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         LogInfo("Background Radio disabled.");
     }
 
+    private void LoadKeyBinds()
+    {
+        Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
+        Config.NavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(Config.NavigateUpKey), Config.NavigateUpKey);
+        Config.NavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(Config.NavigateDownKey), Config.NavigateDownKey);
+        Config.SelectKey = KeyBindStore.Load(KeyBindFile, nameof(Config.SelectKey), Config.SelectKey);
+        Config.StopKey = KeyBindStore.Load(KeyBindFile, nameof(Config.StopKey), Config.StopKey);
+    }
+
     protected override void OnModKitUpdate()
     {
         if (Config.OfflineMode)
@@ -201,6 +212,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         }
 
         if (!_uiVisible) return;
+        if (KeyBindWidget.IsCapturing) return;
 
         _radioUI.HandleKeyboard(_broadcastify, _audioPlayer, Config, _offlinePlayer);
     }

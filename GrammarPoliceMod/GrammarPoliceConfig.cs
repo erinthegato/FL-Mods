@@ -17,6 +17,10 @@ public sealed class GrammarPoliceConfig
     [ModKitConfigDisplay("Toggle Radio UI Key")]
     public KeyCode RadioUIToggleKey { get; set; } = KeyCode.F12;
 
+    public KeyCode RadioNavigateUpKey { get; set; } = KeyCode.UpArrow;
+    public KeyCode RadioNavigateDownKey { get; set; } = KeyCode.DownArrow;
+    public KeyCode RadioSelectKey { get; set; } = KeyCode.Return;
+
     [ModKitConfigDisplay("Confidence Threshold")]
     [ModKitConfigRange(0.1, 1.0, 0.05)]
     public double ConfidenceThreshold { get; set; } = 0.6;

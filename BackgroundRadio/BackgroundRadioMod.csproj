@@ -10,6 +10,9 @@
     <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
       <HintPath>..\GrammarPoliceMod\Lib\FlashingLights.ModKit.Core.dll</HintPath>
       <Private>true</Private>

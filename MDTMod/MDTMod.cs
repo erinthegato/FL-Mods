@@ -22,6 +22,7 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     protected override string ModId => "mdt-mod";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
+    internal const string KeyBindFile = "MDT.keybinds";
 
     internal static MDTMod Instance { get; private set; } = null!;
     internal static bool InputsBlocked;
@@ -39,6 +40,7 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     protected override void OnModKitInitialized()
     {
         Instance = this;
+        Config.MDTToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.MDTToggleKey), Config.MDTToggleKey);
         ToggleKey = Config.MDTToggleKey;
         _mdtUI = new MDTUI();
         NPCDataStore.LoadPhotos();
@@ -97,6 +99,8 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
 
     private void HandleMDTToggle()
     {
+        if (KeyBindWidget.IsCapturing) return;
+
         if (Input.GetKeyDown(ToggleKey))
         {
             _mdtVisible = !_mdtVisible;
@@ -104,6 +108,13 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
             UpdateCursor();
             LogDebug(_mdtVisible ? "MDT opened." : "MDT dismissed.");
         }
+    }
+
+    internal KeyCode DrawToggleKeyBind(Rect rect)
+    {
+        Config.MDTToggleKey = KeyBindWidget.Draw(rect, KeyBindFile, nameof(Config.MDTToggleKey), "Toggle MDT", Config.MDTToggleKey);
+        ToggleKey = Config.MDTToggleKey;
+        return ToggleKey;
     }
 
     private void UpdateCourtTimer()

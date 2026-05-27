@@ -18,6 +18,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     protected override bool EnableConfigHotReload => Config.EnableHotReload;
     protected override TimeSpan ConfigReloadInterval =>
         TimeSpan.FromSeconds(Math.Clamp(Config.HotReloadIntervalSeconds, 0.25, 30));
+    internal const string KeyBindFile = "GrammarPolice.keybinds";
 
     internal static GrammarPoliceMod Instance { get; private set; } = null!;
     public static event Action? PanicTriggered;
@@ -61,6 +62,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         _commandEngine = new CommandEngine();
         _dispatchAudio = new DispatchAudio();
         _radioUI = new RadioUI(_commandEngine, _dispatchAudio);
+        LoadKeyBinds();
         _radioUI.SetOverlayDuration(Config.OverlayDisplaySeconds);
 
         if (_dispatchAudio.PanicAudioFiles.Count > 0)
@@ -88,6 +90,12 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     protected override void OnModKitUpdate()
     {
+        if (KeyBindWidget.IsCapturing)
+        {
+            _radioUI.Update(Time.unscaledDeltaTime);
+            return;
+        }
+
         if (Config.PanicEnabled)
         {
             _panicTimer -= Time.unscaledDeltaTime;
@@ -157,7 +165,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
                 400,
                 300);
 
-            _radioUI.RenderPanel(radioRect, _commandEngine);
+            _radioUI.RenderPanel(radioRect, _commandEngine, Config);
         }
 
         if (Config.ShowTransmissionOverlay)
@@ -184,6 +192,16 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         _commandEngine.ExecuteCommand(code, message);
         PanicTriggered?.Invoke();
         LogInfo($"Panic triggered: {code} - {message}");
+    }
+
+    private void LoadKeyBinds()
+    {
+        Config.PushToTalkKey = KeyBindStore.Load(KeyBindFile, nameof(Config.PushToTalkKey), Config.PushToTalkKey);
+        Config.RadioUIToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioUIToggleKey), Config.RadioUIToggleKey);
+        Config.RadioNavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioNavigateUpKey), Config.RadioNavigateUpKey);
+        Config.RadioNavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioNavigateDownKey), Config.RadioNavigateDownKey);
+        Config.RadioSelectKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioSelectKey), Config.RadioSelectKey);
+        Config.PanicTriggerKey = KeyBindStore.Load(KeyBindFile, nameof(Config.PanicTriggerKey), Config.PanicTriggerKey);
     }
 
     private void UpdateCursor()

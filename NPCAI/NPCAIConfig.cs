@@ -6,6 +6,7 @@ public sealed class NPCAIConfig
 {
     public bool ModEnabled { get; set; } = true;
     public KeyCode ToggleKey { get; set; } = KeyCode.F9;
+    public KeyCode SendKey { get; set; } = KeyCode.Return;
     public string ApiKey { get; set; } = "sk-or-v1-...";
     public string ApiEndpoint { get; set; } = "https://openrouter.ai/api";
     public string ApiModel { get; set; } = "deepseek/deepseek-v4-flash";

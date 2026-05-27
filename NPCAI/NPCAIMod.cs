@@ -17,6 +17,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     protected override string ModId => "npc-ai";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
+    internal const string KeyBindFile = "NPCAI.keybinds";
 
     internal static NPCAIMod Instance { get; private set; } = null!;
 
@@ -69,6 +70,8 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
 
         _chat = new ChatService();
         _ui = new NPCInteractionUI();
+        Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
+        Config.SendKey = KeyBindStore.Load(KeyBindFile, nameof(Config.SendKey), Config.SendKey);
 
         LogInfo("NPC AI initialized. Press F9 to interact.");
     }
@@ -89,6 +92,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     protected override void OnModKitUpdate()
     {
         if (!Config.ModEnabled) return;
+        if (KeyBindWidget.IsCapturing) return;
 
         if (!_isWaiting && Input.GetKeyDown(Config.ToggleKey))
         {
@@ -118,7 +122,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
 
         if (!_uiVisible) return;
 
-        if (!_isWaiting && Input.GetKeyDown(KeyCode.Return))
+        if (!_isWaiting && Input.GetKeyDown(Config.SendKey))
         {
             var text = _ui.InputText?.Trim();
             if (!string.IsNullOrWhiteSpace(text))
@@ -315,7 +319,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         float w = 420, h = 460;
         var rect = new Rect(Screen.width - w - 10, 60, w, h);
 
-        var sent = _ui.Draw(rect, _isWaiting);
+        var sent = _ui.Draw(rect, _isWaiting, Config);
         if (!string.IsNullOrEmpty(sent))
         {
             _ui.AddDialogue("Player", sent);

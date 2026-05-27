@@ -367,6 +367,8 @@ public sealed class MDTUI
         GUI.Label(new Rect(rect.x + rect.width - 160, rect.y + 8, 150, 20),
             DateTime.Now.ToString("HH:mm:ss"), _clockStyle);
 
+        MDTMod.Instance.DrawToggleKeyBind(new Rect(rect.x + 20, rect.y + 10, 150, 22));
+
         GUI.DrawTexture(new Rect(rect.x + 20, rect.y + 48, rect.width - 40, 1), _texLine);
     }
 

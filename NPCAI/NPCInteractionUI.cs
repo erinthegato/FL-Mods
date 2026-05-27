@@ -155,7 +155,7 @@ public sealed class NPCInteractionUI
         _heightsDirty = false;
     }
 
-    public string Draw(Rect rect, bool isLoading)
+    public string Draw(Rect rect, bool isLoading, NPCAIConfig config)
     {
         EnsureStyles();
 
@@ -174,7 +174,7 @@ public sealed class NPCInteractionUI
             y += 22;
         }
 
-        var chatRect = new Rect(rect.x + 4, y, rect.width - 8, rect.height - y - 110);
+        var chatRect = new Rect(rect.x + 4, y, rect.width - 8, rect.height - y - 136);
         GUI.BeginGroup(chatRect);
 
         float cw = chatRect.width, ch = chatRect.height;
@@ -200,9 +200,14 @@ public sealed class NPCInteractionUI
         GUI.EndScrollView();
         GUI.EndGroup();
 
+        float keyY = rect.y + rect.height - 104;
+        float keyW = (rect.width - 10) / 2f;
+        config.ToggleKey = KeyBindWidget.Draw(new Rect(rect.x + 4, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.ToggleKey), "Toggle NPC AI", config.ToggleKey);
+        config.SendKey = KeyBindWidget.Draw(new Rect(rect.x + 6 + keyW, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.SendKey), "Send", config.SendKey);
+
         float iy2 = rect.y + rect.height - 80;
         var btnRect = new Rect(rect.x + 4, iy2, rect.width - 8, 22);
-        if (!isLoading && GUI.Button(btnRect, "Send (ENTER)", _btnStyle!))
+        if (!isLoading && GUI.Button(btnRect, $"Send ({config.SendKey})", _btnStyle!))
         {
             var result = _inputText;
             _inputText = "";

@@ -126,7 +126,7 @@ public sealed class RadioUI
 
         y += 4;
 
-        var contentRect = new Rect(rect.x + 4, y, rect.width - 8, rect.y + rect.height - y - 36);
+        var contentRect = new Rect(rect.x + 4, y, rect.width - 8, rect.y + rect.height - y - 118);
         GUI.BeginGroup(contentRect);
 
         float cx = 0, cy = 0, cw = contentRect.width, ch = contentRect.height;
@@ -200,11 +200,13 @@ public sealed class RadioUI
 
         GUI.EndGroup();
 
-        float by = rect.y + rect.height - 30;
+        float by = rect.y + rect.height - 108;
+        DrawKeyBinds(rect, config, by);
+        by = rect.y + rect.height - 30;
         _infoStyle!.normal.textColor = Color.gray;
         string hint = offline
-            ? "UP/DOWN: Navigate  ENTER: Play  SPACE: Stop  F10: Close"
-            : "UP/DOWN: Navigate  ENTER: Play  SPACE: Stop  F10: Close";
+            ? $"{config.NavigateUpKey}/{config.NavigateDownKey}: Navigate  {config.SelectKey}: Play  {config.StopKey}: Stop  {config.ToggleKey}: Close"
+            : $"{config.NavigateUpKey}/{config.NavigateDownKey}: Navigate  {config.SelectKey}: Play  {config.StopKey}: Stop  {config.ToggleKey}: Close";
         GUI.Label(new Rect(rect.x + 5, by, rect.width - 10, 24), hint, _infoStyle);
 
         if (_statusTimer > 0)
@@ -216,6 +218,19 @@ public sealed class RadioUI
                 GUI.Label(new Rect(rect.x, by - 20, rect.width, 18), _statusText, s);
             }
         }
+    }
+
+    private static void DrawKeyBinds(Rect rect, BackgroundRadioConfig config, float y)
+    {
+        float x = rect.x + 8;
+        float w = (rect.width - 22) / 2f;
+        config.ToggleKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.ToggleKey), "Toggle", config.ToggleKey);
+        config.SelectKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.SelectKey), "Select", config.SelectKey);
+        y += 22;
+        config.NavigateUpKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.NavigateUpKey), "Up", config.NavigateUpKey);
+        config.NavigateDownKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.NavigateDownKey), "Down", config.NavigateDownKey);
+        y += 22;
+        config.StopKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.StopKey), "Stop", config.StopKey);
     }
 
     public void HandleKeyboard(BroadcastifyService service, AudioPlayer player, BackgroundRadioConfig config,
