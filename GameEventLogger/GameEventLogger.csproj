@@ -66,10 +66,11 @@
       <HintPath>..\GrammarPoliceMod\bin\Debug\net6.0-windows10.0.19041.0\GrammarPoliceMod.dll</HintPath>
       <Private>true</Private>
     </Reference>
-    <Reference Include="MDTMod">
-      <HintPath>..\MDTMod\bin\Debug\net6.0-windows\MDTMod.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MDTShared\MDTShared.csproj">
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
   <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(GameRoot)' != ''">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />

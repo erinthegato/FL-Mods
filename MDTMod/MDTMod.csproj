@@ -10,6 +10,9 @@
     <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\MDTShared\MDTShared.csproj">
+      <Private>false</Private>
+    </ProjectReference>
     <Reference Include="FlashingLights.ModKit.Core">
       <HintPath>..\GrammarPoliceMod\Lib\FlashingLights.ModKit.Core.dll</HintPath>
       <Private>true</Private>

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GameRoot>E:\SteamLibrary\steamapps\common\Flashing Lights\</GameRoot>
+    <MelonLoaderNet6>$(GameRoot)MelonLoader\net6\</MelonLoaderNet6>
+    <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="MelonLoader">
+      <HintPath>$(MelonLoaderNet6)MelonLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(Il2CppAssemblies)Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="DeployToUserLibs" AfterTargets="Build">
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)UserLibs" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

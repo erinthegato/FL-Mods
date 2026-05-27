@@ -64,11 +64,14 @@ public static class NPCDataStore
     private static readonly List<ArrestRecord> Arrests = new();
     private static readonly List<NPCInfo> NpcRecords = new();
     private static int _nextId;
+    private static int _dataVersion;
 
     private static readonly string? _dataSavePath;
     private static readonly string? _photoSavePath;
 
     private static string NextId() => $"MDT-{++_nextId:D6}";
+
+    public static int GetDataVersion() => _dataVersion;
 
     private sealed record DataSnapshot(
         List<Citation> Citations,
@@ -93,6 +96,7 @@ public static class NPCDataStore
 
     public static void SaveData()
     {
+        _dataVersion++;
         if (_dataSavePath == null) return;
         try
         {
@@ -168,6 +172,7 @@ public static class NPCDataStore
         Charges.Select(c => c.SubjectName)
                .Union(Citations.Select(c => c.SubjectName))
                .Union(Arrests.Select(a => a.SubjectName))
+               .Union(NpcRecords.Select(n => n.Name))
                .Distinct()
                .OrderBy(n => n)
                .ToArray();
@@ -268,6 +273,9 @@ public static class NPCDataStore
         if (removed > 0) SaveData();
         return removed > 0;
     }
+
+    public static NPCInfo? FindNpcRecord(string name) =>
+        NpcRecords.Find(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     private static readonly Dictionary<string, string> SubjectPhotos = new();
 

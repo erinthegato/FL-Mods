@@ -18,4 +18,7 @@ public sealed class LoggerConfig
 
     [ModKitConfigDisplay("Panic Alarm Duration (seconds)")]
     public float PanicDuration { get; set; } = 5f;
+
+    [ModKitConfigDisplay("Shots before panic triggers")]
+    public int ShotsToPanic { get; set; } = 3;
 }

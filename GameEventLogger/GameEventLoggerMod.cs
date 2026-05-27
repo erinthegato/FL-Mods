@@ -23,7 +23,9 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     // ── Weapon panic ──
     private float _weaponTimer;
     private const float WeaponInterval = 0.5f;
-    private string? _lastWeapon;
+    private GameObject? _cachedPlayer;
+    private Transform? _cachedWeapon;
+    private int _shotCount;
     private bool _panicFired;
 
     // ── AI names → MDT ──
@@ -84,7 +86,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     protected override void OnModKitUpdate()
     {
         if (Config.PanicAlarmEnabled)
-            CheckWeaponPanic();
+            PollPanicInput();
 
         if (Config.NpcRecordEnabled)
         {
@@ -110,7 +112,9 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         _panicFired = false;
         _panicFlashTimer = 0f;
-        _lastWeapon = null;
+        _cachedWeapon = null;
+        _cachedPlayer = null;
+        _shotCount = 0;
 
         if (_logCallback != null)
             Application.remove_logMessageReceived(_logCallback);
@@ -179,37 +183,78 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     //  WEAPON PANIC
     // ═══════════════════════════════════════════════════
 
-    private void CheckWeaponPanic()
+    private void PollPanicInput()
     {
         _weaponTimer -= Time.unscaledDeltaTime;
-        if (_weaponTimer > 0f) return;
-        _weaponTimer = WeaponInterval;
+        if (_weaponTimer <= 0f)
+        {
+            _weaponTimer = WeaponInterval;
+            DiscoverWeapon();
+        }
 
+        if (_panicFired) return;
+
+        if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy)
+        {
+            if (Input.GetMouseButtonDown(0))
+            {
+                _shotCount++;
+                if (_shotCount >= Config.ShotsToPanic)
+                    FirePanic(_cachedWeapon.name);
+            }
+        }
+        else
+        {
+            _shotCount = 0;
+        }
+    }
+
+    private void DiscoverWeapon()
+    {
         try
         {
-            string? found = ScanForWeapons();
-            if (found != null && found != _lastWeapon && !_panicFired)
-                FirePanic(found);
+            if (_cachedPlayer == null)
+                _cachedPlayer = GameObject.FindGameObjectWithTag("Player");
 
-            if (found == null)
+            if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy)
             {
-                _lastWeapon = null;
-                _panicFired = false;
+                var n = _cachedWeapon.name;
+                if (n.Contains("Gun_AP58") || n.Contains("Wep_Pistol_01"))
+                    return;
             }
-            else
-                _lastWeapon = found;
+            _cachedWeapon = null;
+
+            if (_cachedPlayer != null)
+                _cachedWeapon = FindWeapon(_cachedPlayer.transform);
+
+            if (_cachedWeapon == null)
+            {
+                var cam = GameObject.Find("Main Camera");
+                if (cam != null)
+                    _cachedWeapon = FindWeapon(cam.transform);
+            }
+
+            if (_cachedWeapon == null)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                if (scene.IsValid())
+                {
+                    foreach (var root in scene.GetRootGameObjects())
+                    {
+                        if (root == null) continue;
+                        _cachedWeapon = FindWeapon(root.transform);
+                        if (_cachedWeapon != null) break;
+                    }
+                }
+            }
+
+            if (_cachedWeapon == null)
+                _panicFired = false;
         }
         catch { }
     }
 
-    private static string? ScanForWeapons()
-    {
-        var player = GameObject.FindGameObjectWithTag("Player");
-        if (player == null) return null;
-        return WalkForWeapon(player.transform);
-    }
-
-    private static string? WalkForWeapon(Transform t)
+    private static Transform? FindWeapon(Transform t)
     {
         for (int i = 0; i < t.childCount; i++)
         {
@@ -217,8 +262,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if (!child.gameObject.activeInHierarchy) continue;
             var n = child.name;
             if (n.Contains("Gun_AP58") || n.Contains("Wep_Pistol_01"))
-                return n;
-            var found = WalkForWeapon(child);
+                return child;
+            var found = FindWeapon(child);
             if (found != null) return found;
         }
         return null;
@@ -227,15 +272,13 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private void FirePanic(string weapon)
     {
         _panicFired = true;
-        _panicFlashTimer = 5f;
+        _panicFlashTimer = Config.PanicDuration;
 
-        MelonLogger.Msg($"[GameEventLogger] PANIC: {weapon} drawn — dispatching backup");
+        MelonLogger.Msg($"[GameEventLogger] PANIC: {weapon} fired {Config.ShotsToPanic} rounds — dispatching backup");
 
-        // Audio panic via GrammarPoliceMod
         try { _playPanicTone?.Invoke(null, new object[] { "" }); } catch { }
         try { _triggerPanic?.Invoke(_gpInstance, null); } catch { }
 
-        // Native Flashing Lights AI backup dispatch
         DispatchNativeBackup();
     }
 
@@ -320,6 +363,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if ((name.Contains("AI-Names-M generated") || name.Contains("AI-Names-F generated")) &&
                 _seenAINames.Add(name))
             {
+                MelonLogger.Msg($"[GameEventLogger] Found AI-Names object: {name}");
                 CreateNpcRecord(child.gameObject);
             }
             WalkForAINames(child);
@@ -333,6 +377,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             npcName = GenerateNpcName();
         if (string.IsNullOrEmpty(npcName))
             npcName = $"Civilian_{UnityEngine.Random.Range(100, 999)}";
+
+        MelonLogger.Msg($"[GameEventLogger] Creating NPC record: {npcName}");
 
         string reg = "";
         bool insurance = false;
@@ -348,7 +394,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             firearmsLicense = saveData.HasFirearmsLicense;
             wanted = saveData.IsWanted;
             missing = saveData.IsMissing;
+            MelonLogger.Msg($"[GameEventLogger] FlSaveData found for {npcName}: plate={reg}");
         }
+        else
+            MelonLogger.Msg($"[GameEventLogger] No FlSaveData for {npcName}");
 
         if (Config.RandomizeNpcData && string.IsNullOrEmpty(reg) && !insurance && !firearmsLicense && !wanted && !missing)
         {
@@ -414,29 +463,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private FlSaveDataResult? TryReadFlSaveData(string npcName)
     {
-        if (!_flSaveDataSearched)
+        if (_flSaveDataInstance == null)
         {
             _flSaveDataSearched = true;
-            try
-            {
-                _flSaveDataType = System.Type.GetType("FlSaveData");
-                if (_flSaveDataType != null)
-                {
-                    var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-                    if (scene.IsValid())
-                    {
-                        foreach (var go in scene.GetRootGameObjects())
-                        {
-                            if (go == null) continue;
-                            try { _flSaveDataInstance = go.GetComponent("FlSaveData"); if (_flSaveDataInstance != null) break; }
-                            catch { }
-                            _flSaveDataInstance = FindFlSaveDataInChildren(go.transform);
-                            if (_flSaveDataInstance != null) break;
-                        }
-                    }
-                }
-            }
-            catch { }
+            DiscoverFlSaveData();
         }
 
         if (_flSaveDataInstance == null || _flSaveDataType == null) return null;
@@ -494,19 +524,43 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
     }
 
-    private static object? FindFlSaveDataInChildren(Transform t)
+    private void DiscoverFlSaveData()
     {
+        try
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            if (!scene.IsValid()) return;
+
+            foreach (var go in scene.GetRootGameObjects())
+            {
+                if (go == null) continue;
+                _flSaveDataInstance = FindComponentByName(go.transform, "FlSaveData");
+                if (_flSaveDataInstance != null)
+                {
+                    _flSaveDataType = _flSaveDataInstance.GetType();
+                    MelonLogger.Msg($"[GameEventLogger] Found FlSaveData on: {go.name} ({_flSaveDataType.FullName})");
+                    return;
+                }
+            }
+            MelonLogger.Warning("[GameEventLogger] FlSaveData not found in scene");
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Warning($"[GameEventLogger] FlSaveData discovery failed: {ex.Message}");
+        }
+    }
+
+    private static object? FindComponentByName(Transform t, string typeName)
+    {
+        try
+        {
+            var comp = t.gameObject.GetComponent(typeName);
+            if (comp != null) return comp;
+        }
+        catch { }
         for (int i = 0; i < t.childCount; i++)
         {
-            var child = t.GetChild(i);
-            if (child == null) continue;
-            try
-            {
-                var comp = child.gameObject.GetComponent("FlSaveData");
-                if (comp != null) return comp;
-            }
-            catch { }
-            var found = FindFlSaveDataInChildren(child);
+            var found = FindComponentByName(t.GetChild(i), typeName);
             if (found != null) return found;
         }
         return null;

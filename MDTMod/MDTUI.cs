@@ -22,11 +22,12 @@ public sealed class MDTUI
     private int _selectedChargeIndex = -1;
     private int _selectedCitationIndex = -1;
     private string[] _cachedSubjects = Array.Empty<string>();
-    private float _subjectsTimer;
+    private int _lastDataVersion = -1;
     private bool _chargeSubjectSelected;
     private PhotoBrowser _photoBrowser = new();
     private bool _photoBrowserVisible;
     private MDTRole _currentRole = MDTRole.Police;
+    private GameObject? _cachedPlayer;
     private readonly Dictionary<string, Texture2D> _photoCache = new();
 
     private List<USCharge> _pendingCharges = new();
@@ -102,11 +103,19 @@ public sealed class MDTUI
         _cachedAccent = accent;
     }
 
+    private static Color _cachedHighlightColor;
+    private static bool _highlightDirty = true;
+
     private static Texture2D HighlightTex(Color accent)
     {
         InitTex(ref _texHighlight);
-        _texHighlight.SetPixel(0, 0, accent * 0.4f);
+        Color target = accent * 0.4f;
+        if (!_highlightDirty && _cachedHighlightColor == target)
+            return _texHighlight;
+        _texHighlight.SetPixel(0, 0, target);
         _texHighlight.Apply();
+        _cachedHighlightColor = target;
+        _highlightDirty = false;
         return _texHighlight;
     }
 
@@ -266,7 +275,10 @@ public sealed class MDTUI
     {
         try
         {
-            var player = GameObject.FindGameObjectWithTag("Player");
+            GameObject player;
+            if (_cachedPlayer == null)
+                _cachedPlayer = GameObject.FindGameObjectWithTag("Player");
+            player = _cachedPlayer;
             if (player != null)
             {
                 var parent = player.transform.parent;
@@ -293,6 +305,7 @@ public sealed class MDTUI
 
     private void ApplyColors()
     {
+        _highlightDirty = true;
         switch (_currentRole)
         {
             case MDTRole.Police:
@@ -867,10 +880,10 @@ public sealed class MDTUI
 
     private void RenderRecordsTab(float width)
     {
-        _subjectsTimer += Time.unscaledDeltaTime;
-        if (_subjectsTimer >= 2f || _cachedSubjects.Length == 0)
+        int version = NPCDataStore.GetDataVersion();
+        if (version != _lastDataVersion || _cachedSubjects.Length == 0)
         {
-            _subjectsTimer = 0;
+            _lastDataVersion = version;
             _cachedSubjects = NPCDataStore.GetSubjectNames();
         }
 
@@ -945,7 +958,30 @@ public sealed class MDTUI
             var charges = NPCDataStore.GetChargesForSubject(name);
             var citations = NPCDataStore.GetCitationsForSubject(name);
             var arrests = NPCDataStore.GetArrestsForSubject(name);
-            string summary = $"{name,-22} Charges: {charges.Count}  Citations: {citations.Count}  Arrests: {arrests.Count}";
+            var npcInfo = NPCDataStore.FindNpcRecord(name);
+
+            string summary;
+            Color nameColor = _textColor;
+            if (charges.Count > 0 || citations.Count > 0 || arrests.Count > 0)
+            {
+                summary = $"{name,-22} Charges: {charges.Count}  Citations: {citations.Count}  Arrests: {arrests.Count}";
+            }
+            else if (npcInfo != null)
+            {
+                string flags = "";
+                if (npcInfo.IsWanted) flags += " [WANTED]";
+                if (npcInfo.IsMissing) flags += " [MISSING]";
+                summary = $"{name,-22} Plate: {npcInfo.Registration,-10} Ins: {(npcInfo.HasInsurance ? "Y" : "N")} " +
+                          $"Firearm: {(npcInfo.HasFirearmsLicense ? "Y" : "N")}{flags}";
+                if (npcInfo.IsWanted) nameColor = Color.red;
+                else if (npcInfo.IsMissing) nameColor = Color.yellow;
+            }
+            else
+            {
+                summary = $"{name,-22} No records on file.";
+            }
+
+            _recordsBtn.normal.textColor = nameColor;
 
             if (GUI.Button(new Rect(10, y, width - 100, 22), summary, _recordsBtn))
             {
