@@ -5,9 +5,8 @@
     <Nullable>enable</Nullable>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <NoWarn>CA1416</NoWarn>
-    <GameRoot>E:\SteamLibrary\steamapps\common\Flashing Lights\</GameRoot>
-    <MelonLoaderNet6>$(GameRoot)MelonLoader\net6\</MelonLoaderNet6>
-    <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
+    <MelonLoaderNet6>$(GameRoot)\MelonLoader\net6\</MelonLoaderNet6>
+    <Il2CppAssemblies>$(GameRoot)\MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
@@ -63,9 +62,9 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
-  <Target Name="DeployToMods" AfterTargets="Build">
-    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(OutDir)$(AssemblyName).deps.json" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(OutDir)FlashingLights.ModKit.Core.dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
+  <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(GameRoot)' != ''">
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).deps.json" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)FlashingLights.ModKit.Core.dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
   </Target>
 </Project>

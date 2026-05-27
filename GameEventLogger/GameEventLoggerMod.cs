@@ -20,6 +20,48 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 {
     protected override string ModId => "game-event-logger";
 
+    // Static constructor — runs at assembly load, before any game code
+    static GameEventLoggerMod()
+    {
+        try
+        {
+            _crashLogPath = Path.Combine(FindGameRoot(), CrashLogName);
+
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+
+#if NET6_0_OR_GREATER
+            AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
+            {
+                if (e.Exception != null)
+                    LogCrashBuffer(e.Exception);
+            };
+#endif
+
+            ClearCrashLog();
+        }
+        catch { }
+    }
+
+    private static string FindGameRoot()
+    {
+        try
+        {
+            var loc = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            if (loc != null)
+            {
+                var dir = new DirectoryInfo(Path.GetDirectoryName(loc)!);
+                while (dir != null)
+                {
+                    if (File.Exists(Path.Combine(dir.FullName, "flashinglights.exe")))
+                        return dir.FullName;
+                    dir = dir.Parent;
+                }
+            }
+        }
+        catch { }
+        return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? ".";
+    }
+
     // ── Log file ──
     private static readonly string LogFileName = "EventLog.txt";
     private static StreamWriter? _logWriter;
@@ -33,7 +75,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     // ── Singleton ──
     internal static GameEventLoggerMod Instance { get; private set; } = null!;
 
-    // ── Game root caching ──
+    // ── Game root caching (written once at init, thread-safe for crash hooks) ──
     private static string _gameRoot = "";
 
     internal static string GameRoot
@@ -41,43 +83,27 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         get
         {
             if (string.IsNullOrEmpty(_gameRoot))
-            {
-                try
-                {
-                    var loc = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    if (loc != null)
-                    {
-                        var dir = new DirectoryInfo(Path.GetDirectoryName(loc)!);
-                        while (dir != null)
-                        {
-                            if (File.Exists(Path.Combine(dir.FullName, "Flashing Lights.exe")))
-                            {
-                                _gameRoot = dir.FullName;
-                                break;
-                            }
-                            dir = dir.Parent;
-                        }
-                    }
-                }
-                catch { }
-
-                if (string.IsNullOrEmpty(_gameRoot))
-                {
-                    _gameRoot = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? ".";
-                }
-            }
+                _gameRoot = FindGameRoot();
             return _gameRoot;
         }
     }
 
+    // Thread-safe cached root for crash hooks (accessed from Unity render thread)
+    private static string _crashLogPath = "";
+
     // ── Weapon scanning ──
     private float _weaponScanTimer;
     private const float WeaponScanInterval = 1.5f;
+    private float _sceneScanTimer;
+    private const float SceneScanInterval = 0.8f;
     private GameObject? _cachedPlayer;
     private float _playerCacheTimer;
     private const float PlayerCacheTimeout = 5f;
     private GameObject? _cachedCamera;
     private string? _lastWeapon;
+    private readonly HashSet<string> _seenFireEffects = new();
+    private float _fireEffectCleanupTimer;
+    private const float FireEffectCleanupInterval = 10f;
     private bool _firstScan = true;
 
     // ── NPC interaction ──
@@ -86,8 +112,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private const float NpcInteractionInterval = 1f;
 
     // ── NPC name generation ──
-    private float _npcNameTimer;
-    private const float NpcNameInterval = 3f;
     private string? _lastNpcNameGenerated;
 
     // ── Database tracking ──
@@ -96,8 +120,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     // ── Generation tracking ──
     private string? _lastGenerationEvent;
-    private float _genTimer;
-    private const float GenCheckInterval = 3f;
 
     // ── Call tracking ──
     internal readonly HashSet<string> ActiveCalls = new();
@@ -108,6 +130,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private Vector2 _logViewerScroll;
     private string _logContent = "";
     private float _logRefreshTimer;
+    private static GUIStyle? _viewerTitleStyle;
+    private static GUIStyle? _viewerBtnStyle;
+    private static GUIStyle? _viewerLogStyle;
+    private static bool _stylesInitialized;
 
     // ── Game freeze ──
     private bool _cursorWasLocked;
@@ -120,6 +146,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     internal static readonly List<string> CrashBuffer = new();
     internal const int CrashBufferMax = 100;
     private static bool _crashHooksSet;
+    private static Action<string, string, LogType>? _logCallback;
 
     // ── Heartbeat ──
     private static int _heartbeatCount;
@@ -159,7 +186,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 WriteLog("[Logger] Call dispatch tracking ACTIVE — logging all pool activations/deactivations");
 
             if (Config.LogWeapons)
-                WriteLog("[Logger] Weapon tracking ACTIVE — scanning every 1.5s for equipped items");
+                WriteLog("[Logger] Weapon tracking ACTIVE — scanning every 1.5s for equipped items, 0.8s for fire/effects");
 
             if (Config.LogNpcInteractions)
                 WriteLog("[Logger] NPC interaction tracking ACTIVE");
@@ -187,7 +214,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     protected override void OnModKitUpdate()
     {
-        // ── Weapon scan ──
+        // ── Weapon scan (equipped state changes) ──
         if (Config.LogWeapons)
         {
             _weaponScanTimer -= Time.unscaledDeltaTime;
@@ -195,6 +222,13 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             {
                 _weaponScanTimer = WeaponScanInterval;
                 ScanForWeapon();
+            }
+
+            _sceneScanTimer -= Time.unscaledDeltaTime;
+            if (_sceneScanTimer <= 0f)
+            {
+                _sceneScanTimer = SceneScanInterval;
+                BatchSceneScan();
             }
         }
 
@@ -209,17 +243,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             }
         }
 
-        // ── NPC name generation scan ──
-        if (Config.LogNpcNames)
-        {
-            _npcNameTimer -= Time.unscaledDeltaTime;
-            if (_npcNameTimer <= 0f)
-            {
-                _npcNameTimer = NpcNameInterval;
-                ScanForNpcNameGeneration();
-            }
-        }
-
         // ── Database update check ──
         if (Config.LogDatabase)
         {
@@ -228,17 +251,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             {
                 _dbTimer = DbCheckInterval;
                 CheckDatabaseUpdates();
-            }
-        }
-
-        // ── Generation event scan ──
-        if (Config.LogGeneration)
-        {
-            _genTimer -= Time.unscaledDeltaTime;
-            if (_genTimer <= 0f)
-            {
-                _genTimer = GenCheckInterval;
-                ScanForGenerationEvents();
             }
         }
 
@@ -322,29 +334,37 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         var y = rect.y + 6;
 
         // Title
+        if (!_stylesInitialized || _viewerTitleStyle == null)
+        {
+            _viewerTitleStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold };
+            _viewerTitleStyle.normal.textColor = new Color(0.2f, 0.6f, 1f);
+
+            _viewerBtnStyle = new GUIStyle(GUI.skin.button) { fontSize = 11 };
+            _viewerBtnStyle.normal.textColor = Color.white;
+            _viewerBtnStyle.normal.background = MakeTex(new Color(0.25f, 0.25f, 0.35f));
+            _viewerBtnStyle.hover.textColor = Color.white;
+            _viewerBtnStyle.hover.background = MakeTex(new Color(0.35f, 0.35f, 0.45f));
+
+            _viewerLogStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = false, richText = true };
+            _viewerLogStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+
+            _stylesInitialized = true;
+        }
+
         var titleRect = new Rect(rect.x + 6, y, rect.width - 12, 22);
-        var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold };
-        titleStyle.normal.textColor = new Color(0.2f, 0.6f, 1f);
-        GUI.Label(titleRect, "Event Log Viewer", titleStyle);
+        GUI.Label(titleRect, "Event Log Viewer", _viewerTitleStyle);
         y += 26;
 
-        // Buttons style
-        var btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 11 };
-        btnStyle.normal.textColor = Color.white;
-        btnStyle.normal.background = MakeTex(new Color(0.25f, 0.25f, 0.35f));
-        btnStyle.hover.textColor = Color.white;
-        btnStyle.hover.background = MakeTex(new Color(0.35f, 0.35f, 0.45f));
-
-        if (GUI.Button(new Rect(rect.x + 6, y, 60, 20), "Refresh", btnStyle))
+        if (GUI.Button(new Rect(rect.x + 6, y, 60, 20), "Refresh", _viewerBtnStyle))
             RefreshLogContent();
 
-        if (GUI.Button(new Rect(rect.x + 70, y, 60, 20), "Clear", btnStyle))
+        if (GUI.Button(new Rect(rect.x + 70, y, 60, 20), "Clear", _viewerBtnStyle))
         {
             ClearLog();
             RefreshLogContent();
         }
 
-        if (GUI.Button(new Rect(rect.x + rect.width - 66, y, 60, 20), "Close", btnStyle))
+        if (GUI.Button(new Rect(rect.x + rect.width - 66, y, 60, 20), "Close", _viewerBtnStyle))
             _logViewerVisible = false;
 
         y += 26;
@@ -356,10 +376,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             _logRefreshTimer = 2f;
             RefreshLogContent();
         }
-
-        // Log text style
-        var logStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = false, richText = true };
-        logStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
 
         // Scroll view
         var scrollRect = new Rect(rect.x + 4, y, rect.width - 8, rect.height - (y - rect.y) - 8);
@@ -380,7 +396,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         {
             if (!string.IsNullOrEmpty(line))
             {
-                GUI.Label(new Rect(4, drawY, viewWidth - 24, lineHeight), line, logStyle);
+                GUI.Label(new Rect(4, drawY, viewWidth - 24, lineHeight), line, _viewerLogStyle);
             }
             drawY += lineHeight;
         }
@@ -389,11 +405,17 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         GUI.EndGroup();
     }
 
+    private static readonly Dictionary<long, Texture2D> _texCache = new();
     private static Texture2D MakeTex(Color c)
     {
+        var key = (long)(c.r * 255) << 24 | (long)(c.g * 255) << 16 | (long)(c.b * 255) << 8 | (long)(c.a * 255);
+        if (_texCache.TryGetValue(key, out var cached))
+            return cached;
+
         var tex = new Texture2D(1, 1);
         tex.SetPixel(0, 0, c);
         tex.Apply();
+        _texCache[key] = tex;
         return tex;
     }
 
@@ -495,7 +517,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            File.WriteAllText(Path.Combine(GameRoot, CrashLogName), $"=== Crash Log Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n");
+            var path = _crashLogPath;
+            if (string.IsNullOrEmpty(path))
+                path = Path.Combine(GameRoot, CrashLogName);
+            File.WriteAllText(path, $"=== Crash Log Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n");
         }
         catch { }
     }
@@ -504,7 +529,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            File.AppendAllText(Path.Combine(GameRoot, CrashLogName), message + "\n");
+            var path = _crashLogPath;
+            if (string.IsNullOrEmpty(path))
+                path = Path.Combine(GameRoot, CrashLogName);
+            File.AppendAllText(path, message + "\n");
         }
         catch { }
     }
@@ -534,14 +562,24 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         try
         {
-            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+            // Unity-level hooks — need engine initialized
+            _logCallback = new Action<string, string, LogType>(OnUnityLogMessage);
+            Application.add_logMessageReceived(_logCallback);
 
-            ClearCrashLog();
-            WriteLog("[Logger] Crash hooks ACTIVE — errors logged to CrashLog.txt (auto-cleared on launch)");
+            WriteLog("[Logger] Crash hooks ACTIVE — all errors logged to CrashLog.txt");
         }
         catch (Exception ex)
         {
-            WriteLog($"[Logger] Failed to set crash hooks: {ex.Message}");
+            WriteLog($"[Logger] Failed to set Unity crash hooks: {ex.Message}");
+        }
+    }
+
+    private static void OnUnityLogMessage(string condition, string stackTrace, LogType type)
+    {
+        if (type == LogType.Exception || type == LogType.Error || type == LogType.Assert)
+        {
+            WriteCrashLog($"[Unity {type}] {condition}");
+            WriteCrashLog(stackTrace);
         }
     }
 
@@ -555,6 +593,22 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         WriteCrashLog($"Message: {ex?.Message}");
         WriteCrashLog($"Stack: {ex?.StackTrace}");
 
+        FlushCrashBuffer();
+        WriteCrashLog("=== Crash Log Ended ===");
+    }
+
+    private static void LogCrashBuffer(Exception ex)
+    {
+        lock (CrashBuffer)
+        {
+            CrashBuffer.Add($"[FirstChance] {ex.GetType().Name}: {ex.Message}");
+            if (CrashBuffer.Count > CrashBufferMax)
+                CrashBuffer.RemoveAt(0);
+        }
+    }
+
+    private static void FlushCrashBuffer()
+    {
         lock (CrashBuffer)
         {
             WriteCrashLog("=== Recent Event Log ===");
@@ -562,9 +616,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             {
                 WriteCrashLog(entry);
             }
+            CrashBuffer.Clear();
         }
-
-        WriteCrashLog("=== Crash Log Ended ===");
     }
 
     // ═══════════════════════════════════════════════════
@@ -612,10 +665,12 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             catch { }
 
             var lower = obj.name.ToLowerInvariant();
+
+            if (lower == "savemsg" || lower.Contains("img_") || lower.Contains("ui_")) continue;
+
             if (lower.Contains("player") || lower.Contains("fps") || lower.Contains("character") ||
                 lower.Contains("firstperson") || lower.Contains("cop") || lower.Contains("police") ||
-                lower.Contains("sheriff") || lower.Contains("ems") || lower.Contains("name_gen") ||
-                lower.StartsWith("fd"))
+                lower.Contains("sheriff") || lower.StartsWith("ems") || lower.StartsWith("fd"))
             {
                 WriteLog($"[Weapon] FindPlayer: fallback name \"{obj.name}\" matched \"{lower}\"");
                 return obj;
@@ -673,28 +728,14 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             UpdatePlayerAndCameraCache();
 
             var player = _cachedPlayer;
-            string? weaponName = null;
+            string? equippedWeapon = null;
 
+            // ── Find equipped weapon (player/camera hierarchy) ──
             if (player != null)
-                weaponName = FindWeaponInHierarchy(player.transform);
+                equippedWeapon = FindWeaponInHierarchy(player.transform);
 
-            if (weaponName == null && _cachedCamera != null)
-                weaponName = FindWeaponInHierarchy(_cachedCamera.transform);
-
-            if (weaponName == null)
-            {
-                foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
-                {
-                    if (obj == null) continue;
-                    if (obj.transform.parent == null) continue;
-                    if (obj.name.StartsWith("Coll_", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (IsWeaponName(obj.name) && obj.activeInHierarchy)
-                    {
-                        weaponName = obj.name;
-                        break;
-                    }
-                }
-            }
+            if (equippedWeapon == null && _cachedCamera != null)
+                equippedWeapon = FindWeaponInHierarchy(_cachedCamera.transform);
 
             // ── First scan: debug output ──
             if (_firstScan)
@@ -702,9 +743,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 _firstScan = false;
 
                 if (player != null)
-                {
                     WriteLog($"[Weapon] Player found: \"{player.name}\", children: {player.transform.childCount}");
-                }
                 else
                 {
                     WriteLog("[Weapon] Player not found — dumping root hierarchy:");
@@ -718,34 +757,72 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 WriteLog(_cachedCamera != null ? "[Weapon] MainCamera found" : "[Weapon] MainCamera not found (name=MainCamera)");
             }
 
-            // ── State change detection ──
-            if (weaponName != _lastWeapon)
+            // ── Equipped weapon state change ──
+            if (equippedWeapon != _lastWeapon)
             {
                 var oldWep = _lastWeapon ?? "(none)";
-                var newWep = weaponName ?? "(none)";
+                var newWep = equippedWeapon ?? "(none)";
 
-                if (weaponName == null)
+                if (equippedWeapon == null)
                     WriteLog($"[Weapon] Holstered (was {oldWep})");
                 else if (_lastWeapon == null)
                     WriteLog($"[Weapon] Drawn: {newWep}");
                 else
                     WriteLog($"[Weapon] Switched: {oldWep} -> {newWep}");
 
-                _lastWeapon = weaponName;
+                _lastWeapon = equippedWeapon;
+            }
 
-                // Count weapon objects attached to player
-                int weaponCount = 0;
-                if (player != null)
+        }
+        catch { }
+    }
+
+    private void BatchSceneScan()
+    {
+        try
+        {
+            _fireEffectCleanupTimer -= Time.unscaledDeltaTime;
+            if (_fireEffectCleanupTimer <= 0f)
+            {
+                _fireEffectCleanupTimer = FireEffectCleanupInterval;
+                _seenFireEffects.Clear();
+            }
+
+            bool checkFire = Config.LogWeapons;
+            bool checkNpcName = Config.LogNpcNames;
+            bool checkGen = Config.LogGeneration;
+
+            if (!checkFire && !checkNpcName && !checkGen) return;
+
+            foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
+            {
+                if (obj == null || !obj.activeInHierarchy) continue;
+
+                var name = obj.name;
+                var lower = name.ToLowerInvariant();
+
+                if (checkFire && _seenFireEffects.Add(name) && IsFireEffect(name, lower))
+                    WriteLog($"[Weapon] FIRED: {name}");
+
+                if (checkNpcName && lower.Contains("name") && (lower.Contains("generated") || lower.Contains("gen_") || lower.Contains("_name")))
                 {
-                    for (int i = 0; i < player.transform.childCount; i++)
+                    if (name != _lastNpcNameGenerated)
                     {
-                        if (IsWeaponName(player.transform.GetChild(i).name))
-                            weaponCount++;
+                        _lastNpcNameGenerated = name;
+                        WriteLog($"[NPC Name] Generated: \"{name}\"");
                     }
                 }
 
-                if (weaponCount > 0)
-                    WriteLog($"[Weapon] Carrier has {weaponCount} weapon objects attached");
+                if (checkGen && (lower.Contains("generation") || lower.Contains("gen_") ||
+                    lower.Contains("spawner") || lower.Contains("population") ||
+                    lower.Contains("worldgen") || lower.Contains("procgen")))
+                {
+                    if (name != _lastGenerationEvent)
+                    {
+                        _lastGenerationEvent = name;
+                        WriteLog($"[Generation] Active: \"{name}\"");
+                    }
+                }
             }
         }
         catch { }
@@ -777,11 +854,20 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         "wheel", "pos_", "coll_", "mixamorig", "container", "group",
         "pool", "npc", "name", "database", "generation", "spawner",
         "char", "body", "bomb", "flame", "lod_", "level", "bip",
-        "muzzle", "muzzlefire", "weapons", "img_", "ui_", "icon_"
+        "weapons", "img_", "ui_", "icon_", "ammo-case"
     };
 
     private static readonly string[] WeaponExcludeExact = {
         "weapon", "weapon2"
+    };
+
+    // Fire/projectile effect patterns — these indicate a weapon was FIRED, not just equipped
+    private static readonly string[] FireEffectPrefixes = {
+        "shot-", "bullet_", "bullet-", "muzzle", "shell", "tracer",
+        "projectile", "casing", "explosion", "explode", "spark"
+    };
+    private static readonly string[] FireEffectContains = {
+        "muzzlefire", "case(", "_trail", "-taser", "impact"
     };
 
     private static bool IsWeaponName(string name)
@@ -799,6 +885,24 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         foreach (var p in WeaponExact)
             if (lower == p) return true;
+
+        return false;
+    }
+
+    private static bool IsFireEffect(string name, string? lower = null)
+    {
+        lower ??= name.ToLowerInvariant();
+
+        if (lower.StartsWith("coll_") || lower.StartsWith("ground") || lower == "background" ||
+            lower == "bullets" || lower.StartsWith("pos_") || lower.StartsWith("data-"))
+            return false;
+
+        foreach (var p in FireEffectPrefixes)
+            if (lower.StartsWith(p) || lower.Contains("_" + p) || lower.Contains("-" + p))
+                return true;
+
+        foreach (var p in FireEffectContains)
+            if (lower.Contains(p)) return true;
 
         return false;
     }
@@ -834,32 +938,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     }
 
     // ═══════════════════════════════════════════════════
-    //  NPC NAME GENERATION SCANNING
-    // ═══════════════════════════════════════════════════
-
-    private void ScanForNpcNameGeneration()
-    {
-        try
-        {
-            foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
-            {
-                if (obj == null || !obj.activeInHierarchy) continue;
-                var lower = obj.name.ToLowerInvariant();
-                if (lower.Contains("name") && (lower.Contains("generated") || lower.Contains("gen_") || lower.Contains("_name")))
-                {
-                    if (obj.name != _lastNpcNameGenerated)
-                    {
-                        _lastNpcNameGenerated = obj.name;
-                        WriteLog($"[NPC Name] Generated: \"{obj.name}\"");
-                    }
-                    return;
-                }
-            }
-        }
-        catch { }
-    }
-
-    // ═══════════════════════════════════════════════════
     //  DATABASE UPDATE TRACKING
     // ═══════════════════════════════════════════════════
 
@@ -887,35 +965,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 else
                 {
                     _dbFileSizes[file] = len;
-                }
-            }
-        }
-        catch { }
-    }
-
-    // ═══════════════════════════════════════════════════
-    //  GENERATION EVENT TRACKING
-    // ═══════════════════════════════════════════════════
-
-    private void ScanForGenerationEvents()
-    {
-        try
-        {
-            foreach (var obj in Object.FindObjectsOfType<GameObject>(true))
-            {
-                if (obj == null || !obj.activeInHierarchy) continue;
-                var lower = obj.name.ToLowerInvariant();
-
-                if (lower.Contains("generation") || lower.Contains("gen_") ||
-                    lower.Contains("spawner") || lower.Contains("population") ||
-                    lower.Contains("worldgen") || lower.Contains("procgen"))
-                {
-                    if (obj.name != _lastGenerationEvent)
-                    {
-                        _lastGenerationEvent = obj.name;
-                        WriteLog($"[Generation] Active: \"{obj.name}\"");
-                    }
-                    return;
                 }
             }
         }
@@ -978,7 +1027,13 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         if (_gameFrozen)
             UnfreezeGame();
 
+        if (_logCallback != null)
+            UnityEngine.Application.remove_logMessageReceived(_logCallback);
         _harmony?.UnpatchSelf();
         CloseLog();
+
+        foreach (var tex in _texCache.Values)
+            Object.Destroy(tex);
+        _texCache.Clear();
     }
 }

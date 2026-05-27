@@ -43,6 +43,11 @@ internal static class PoolPatches
                 GameEventLoggerMod.WriteLog($"[Generation] Pool: \"{pool}\" (group={group})");
             }
 
+            if (tag == "EVENT_ID")
+            {
+                GameEventLoggerMod.WriteLog($"[Call ID / Event #] group=\"{group}\" pool=\"{pool}\"");
+            }
+
             if (tag == "UNKNOWN" && (mod.LogCalls || mod.LogWeapons))
             {
                 GameEventLoggerMod.WriteLog($"[Pool] (uncategorized) group=\"{group}\" pool=\"{pool}\"");
@@ -110,6 +115,11 @@ internal static class PoolPatches
             if (tag == "GENERATION" && mod.LogGeneration)
             {
                 GameEventLoggerMod.WriteLog($"[Generation] Pool deactivated: \"{pool}\" (group={group})");
+            }
+
+            if (tag == "EVENT_ID")
+            {
+                GameEventLoggerMod.WriteLog($"[Call ID / Event #] Deactivated: group=\"{group}\" pool=\"{pool}\"");
             }
         }
         catch
@@ -184,6 +194,21 @@ internal static class PoolPatches
             pool.Contains("spawner", StringComparison.OrdinalIgnoreCase))
         {
             return "GENERATION";
+        }
+
+        // Call ID / Event # patterns
+        if (group.Contains("call_id", StringComparison.OrdinalIgnoreCase) ||
+            group.Contains("callid", StringComparison.OrdinalIgnoreCase) ||
+            group.Contains("event_#", StringComparison.OrdinalIgnoreCase) ||
+            group.Contains("event#", StringComparison.OrdinalIgnoreCase) ||
+            group.Contains("event_id", StringComparison.OrdinalIgnoreCase) ||
+            pool.Contains("call_id", StringComparison.OrdinalIgnoreCase) ||
+            pool.Contains("callid", StringComparison.OrdinalIgnoreCase) ||
+            pool.Contains("event_#", StringComparison.OrdinalIgnoreCase) ||
+            pool.Contains("event#", StringComparison.OrdinalIgnoreCase) ||
+            pool.Contains("event_id", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EVENT_ID";
         }
 
         return "UNKNOWN";

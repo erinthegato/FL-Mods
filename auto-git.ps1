@@ -1,5 +1,8 @@
-$repo = "C:\Users\joshy\OneDrive\Documents\FL MODS"
-Set-Location $repo
+$root = "C:\Users\joshy\OneDrive\Documents\FL MODS"
+Set-Location $root
+
+# Build both projects before committing
+& "$root\build.ps1"
 
 $date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $message = "Auto-sync $date"
