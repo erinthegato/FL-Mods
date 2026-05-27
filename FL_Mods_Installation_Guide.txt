@@ -1,0 +1,122 @@
+FLASHING LIGHTS MODS — INSTALLATION GUIDE
+==========================================
+These mods add dispatch radio, background scanner audio, NPC AI interaction,
+and an MDT terminal to Flashing Lights.
+
+REQUIRED DEPENDENCIES
+---------------------
+1. MelonLoader (v0.7.3 Open-Beta or later, IL2CPP, net6)
+   - Download: https://melonwiki.xyz/
+   - Run MelonLoader.Installer.exe, select Flashing Lights.exe
+   - Must install IL2CPP / net6 variant
+
+2. .NET 6 SDK (only needed to build from source)
+   - Download: https://dotnet.microsoft.com/en-us/download/dotnet/6.0
+   - Verify:   dotnet --list-sdks
+
+3. FlashingLights.ModKit.Core.dll (125 KB)
+   - Bundled in FL_MODS_BUILD.zip under Mods\
+   - Also auto-copied by GrammarPoliceMod build
+
+QUICK INSTALL (from FL_MODS_BUILD.zip)
+---------------------------------------
+1. Extract FL_MODS_BUILD.zip anywhere
+2. Copy ALL files from the Mods\ folder inside the zip to:
+     E:\SteamLibrary\steamapps\common\Flashing Lights\Mods\
+   Overwrite any existing files.
+3. Copy the DispatchAudio\ folder to the game root:
+     E:\SteamLibrary\steamapps\common\Flashing Lights\
+   (Contains 36 WAV files for 10-code dispatch sounds.)
+4. Launch the game. Mods load automatically.
+
+MOD LIST
+--------
+GrammarPoliceMod.dll      49 KB  Police dispatch radio overlay, 10-code WAV
+                                 playback via keyboard, panic button with
+                                 auto-resume cooldown, audio ducking for
+                                 Background Radio.
+
+BackgroundRadioMod.dll    36 KB  Background police scanner. Two modes:
+                                 - Live: fetches top 50 feeds from
+                                   Broadcastify, streams via WMP
+                                 - Offline: plays .wav/.mp3 files from
+                                   Flashing Lights\OfflineScanner\
+                                 Auto-skip removed. Broadcastify URL fixed.
+
+NPCAI.dll                 26 KB  NPC interaction window (F9). Talks to an
+                                 OpenAI-compatible API (DeepSeek/OpenRouter/
+                                 OpenAI) and reads responses aloud via TTS.
+                                 See "NPCAI API CONFIG" below.
+
+MDTMod.dll                72 KB  In-game Mobile Data Terminal. Look up
+                                 records, issue charges/citations, modify
+                                 data. Auto-creates mdt_data.json.
+
+GameEventLogger.dll       15 KB  Logs scene loads, dispatch calls, and
+                                 weapon changes to EventLog.txt at game
+                                 root. Configurable via ModKit UI.
+
+FlashingLights.ModKit.Core.dll   Shared dependency (required by all mods).
+
+NPCAI API CONFIG
+----------------
+NPCAI needs an API key to work. The default config uses OpenRouter with
+a free model. Configure via the ModKit in-game UI or config file:
+
+  1. Get a free API key: https://openrouter.ai/keys
+  2. In the NPCAI mod config, set:
+       ApiKey      = "sk-or-v1-..."
+       ApiEndpoint = "https://openrouter.ai/api"
+       ApiModel    = "deepseek/deepseek-v4-flash"
+  3. Config hot-reloads every 1 second — no restart needed.
+
+  Alternative providers:
+    Provider    ApiEndpoint                   ApiModel
+    DeepSeek    https://api.deepseek.com      deepseek-v4-flash
+    OpenAI      https://api.openai.com        gpt-4o-mini
+    OpenRouter  https://openrouter.ai/api     deepseek/deepseek-v4-flash
+
+OFFLINE SCANNER SETUP
+---------------------
+  1. Create folder: Flashing Lights\OfflineScanner\
+  2. Place .wav or .mp3 files inside
+  3. In-game, toggle OfflineMode in Background Radio config
+  4. Use OfflinePauseSeconds to set gap between tracks (default 30s)
+
+IN-GAME CONTROLS
+----------------
+  Grammar Police:   Radio overlay on transmit, configurable panic key
+  Background Radio: F10 open/close, UP/DOWN navigate, ENTER play, SPACE stop
+  NPCAI:            F9 open, type message, ENTER send
+  MDT:              Opens via key bind in-game
+  Event Logger:     No UI — logs automatically to EventLog.txt
+
+BUILDING FROM SOURCE
+--------------------
+Build order matters (GrammarPoliceMod first, others reference its Lib\ path):
+
+  cd C:\Users\joshy\OneDrive\Documents\FL MODS\GrammarPoliceMod
+  dotnet build -c Release
+
+  cd C:\Users\joshy\OneDrive\Documents\FL MODS\BackgroundRadio
+  dotnet build -c Release
+
+  cd C:\Users\joshy\OneDrive\Documents\FL MODS\NPCAI
+  dotnet build -c Release
+
+  cd C:\Users\joshy\OneDrive\Documents\FL MODS\MDTMod
+  dotnet build -c Release
+
+  cd C:\Users\joshy\AppData\Local\Temp\opencode\GameEventLogger
+  dotnet build -c Release
+
+Each .csproj has a DeployToMods target that auto-copies the Release DLL
+to the game's Mods\ folder.
+
+TROUBLESHOOTING
+---------------
+- Mod not loading?  Check Latest.log in MelonLoader\ folder.
+- MelonLoader 502 error?  Add --disable-api to Steam launch options.
+- No Broadcastify feeds?  The site may have changed layout again.
+- No NPC response?  Check your API key and endpoint in NPCAI config.
+- EventLog.txt empty?  GameEventLogger writes with AutoFlush=true now.
