@@ -10,12 +10,6 @@ public sealed class LoggerConfig
     [ModKitConfigDisplay("Panic Alarm on Weapon Draw")]
     public bool PanicAlarmEnabled { get; set; } = true;
 
-    [ModKitConfigDisplay("Auto-Create MDT NPC Records")]
-    public bool NpcRecordEnabled { get; set; } = true;
-
-    [ModKitConfigDisplay("Randomize NPC Data When Unavailable")]
-    public bool RandomizeNpcData { get; set; } = true;
-
     [ModKitConfigDisplay("Panic Alarm Duration (seconds)")]
     public float PanicDuration { get; set; } = 5f;
 

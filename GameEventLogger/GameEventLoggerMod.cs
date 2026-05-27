@@ -30,18 +30,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private bool _panicFired;
 
     // ── AI names → MDT ──
-    private readonly HashSet<int> _seenAINames = new();
-    private float _sceneTimer;
-    private const float SceneInterval = 1.5f;
-    private string[] _firstNames = Array.Empty<string>();
-    private string[] _lastNames = Array.Empty<string>();
-    private GameObject[] _cachedRoots = Array.Empty<GameObject>();
-    private int _rootsVersion;
-    private int _lastRootCount;
-    private bool _loggedPlayMakerSnapshotForScene;
-    private float _nextPlayMakerNameSyncTime;
-    private const float PlayMakerNameSyncInterval = 5f;
-    private readonly HashSet<string> _syncedPlayMakerNames = new(StringComparer.OrdinalIgnoreCase);
+    // NPC/MDT record creation was removed from this logger.
 
     // ── Panic overlay ──
     private float _panicFlashTimer;
@@ -50,7 +39,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private MethodInfo? _playPanicTone;
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
-    private readonly HarmonyLib.Harmony _playMakerNameHarmony = new("GameEventLogger.PlayMakerNames");
 
     // ── Crash hooks ──
     private static string? _crashLogPath;
@@ -83,30 +71,16 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     protected override void OnModKitInitialized()
     {
-        LoadNameFiles();
         SetupCrashHooks();
         CacheReflectionHandles();
-        InstallPlayMakerNameHooks();
         MelonLogger.Msg($"[GameEventLogger] persistentDataPath: {Application.persistentDataPath}");
-        MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm + MDT NPC records active.");
+        MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm active.");
     }
 
     protected override void OnModKitUpdate()
     {
         if (Config.PanicAlarmEnabled)
             PollPanicInput();
-
-        if (Config.NpcRecordEnabled)
-        {
-            SyncNpcRecordsFromPlayMakerDatabase();
-
-            _sceneTimer -= Time.unscaledDeltaTime;
-            if (_sceneTimer <= 0f)
-            {
-                _sceneTimer = SceneInterval;
-                ScanForAINames();
-            }
-        }
 
         if (_panicFlashTimer > 0f)
             _panicFlashTimer -= Time.unscaledDeltaTime;
@@ -125,8 +99,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
-        _playMakerNameHarmony.UnpatchSelf();
-
         if (_logCallback != null)
             Application.remove_logMessageReceived(_logCallback);
 
@@ -164,6 +136,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         catch { }
     }
 
+#if false
     // ═══════════════════════════════════════════════════
     //  NAME FILES
     // ═══════════════════════════════════════════════════
@@ -217,6 +190,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             MelonLogger.Warning($"[GameEventLogger] Could not load name files: {ex.Message}");
         }
     }
+
+#endif
 
     // ═══════════════════════════════════════════════════
     //  WEAPON PANIC
@@ -369,6 +344,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
     }
 
+#if false
     // ═══════════════════════════════════════════════════
     //  AI NAMES → MDT NPC RECORDS
     // ═══════════════════════════════════════════════════
@@ -1242,6 +1218,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             plate[i] = chars[26 + UnityEngine.Random.Range(0, 10)];
         return new string(plate);
     }
+
+#endif
 
     // ═══════════════════════════════════════════════════
     //  PANIC OVERLAY
