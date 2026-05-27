@@ -51,11 +51,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
     private readonly HarmonyLib.Harmony _playMakerNameHarmony = new("GameEventLogger.PlayMakerNames");
-    private object? _flSaveDataInstance;
-    private System.Type? _flSaveDataType;
-    private float _nextFlSaveDataSearchTime;
-    private float _nextFlSaveDataSyncTime;
-    private readonly HarmonyLib.Harmony _flSaveDataHarmony = new("GameEventLogger.FlSaveData");
 
     // ── Crash hooks ──
     private static string? _crashLogPath;
@@ -131,7 +126,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedPlayer = null;
         _shotCount = 0;
         _playMakerNameHarmony.UnpatchSelf();
-        _flSaveDataHarmony.UnpatchSelf();
 
         if (_logCallback != null)
             Application.remove_logMessageReceived(_logCallback);
@@ -1221,6 +1215,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
         return null;
     }
+
+#endif
 
     // ═══════════════════════════════════════════════════
     //  NAME / PLATE GENERATORS
