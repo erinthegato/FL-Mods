@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace GameEventLogger;
 
@@ -34,6 +35,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private string[] _code99Files = Array.Empty<string>();
     private bool _loggedMissingPanicTone;
     private bool _loggedMissingCode99;
+    private float _nextWeaponCacheRefreshTime;
+    private readonly List<Transform> _weaponCandidates = new();
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
     private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
@@ -68,6 +71,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
+        _weaponCandidates.Clear();
     }
 
     // ═══════════════════════════════════════════════════
@@ -149,9 +153,61 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             }
 
             if (_cachedWeapon == null)
+                _cachedWeapon = FindCachedSceneWeapon();
+
+            if (_cachedWeapon == null)
                 _panicFired = false;
         }
         catch { }
+    }
+
+    private Transform? FindCachedSceneWeapon()
+    {
+        if (Time.unscaledTime >= _nextWeaponCacheRefreshTime)
+            RefreshWeaponCache();
+
+        for (int i = _weaponCandidates.Count - 1; i >= 0; i--)
+        {
+            var weapon = _weaponCandidates[i];
+            if (weapon == null)
+            {
+                _weaponCandidates.RemoveAt(i);
+                continue;
+            }
+
+            if (weapon.gameObject.activeInHierarchy && IsWeaponName(weapon.name))
+                return weapon;
+        }
+
+        return null;
+    }
+
+    private void RefreshWeaponCache()
+    {
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + 2.5f;
+        _weaponCandidates.Clear();
+
+        var scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid()) return;
+
+        foreach (var root in scene.GetRootGameObjects())
+        {
+            if (root == null || !root.activeInHierarchy) continue;
+            CollectWeapons(root.transform);
+        }
+    }
+
+    private void CollectWeapons(Transform root)
+    {
+        if (IsWeaponName(root.name))
+        {
+            _weaponCandidates.Add(root);
+            return;
+        }
+
+        int count = root.childCount;
+        for (int i = 0; i < count; i++)
+            CollectWeapons(root.GetChild(i));
     }
 
     private static Transform? FindWeapon(Transform t)

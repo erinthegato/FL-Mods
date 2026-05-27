@@ -80,7 +80,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     protected override void OnModKitDisabled()
     {
-        _commandEngine.Stop();
+        SafeStopVoice();
         _uiVisible = false;
         _pttShown = false;
         _pttWasHeld = false;
@@ -138,7 +138,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         }
         else if (!pttHeld && _pttWasHeld)
         {
-            _commandEngine.Stop();
+            SafeStopVoice();
             if (_pttShown)
             {
                 _uiVisible = false;
@@ -150,6 +150,17 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
         _radioUI.Update(Time.unscaledDeltaTime);
         _commandEngine.Update();
+    }
+
+    private void SafeStopVoice()
+    {
+        try
+        {
+            _commandEngine.Stop();
+        }
+        catch (FileNotFoundException)
+        {
+        }
     }
 
     protected override void OnModKitGui()

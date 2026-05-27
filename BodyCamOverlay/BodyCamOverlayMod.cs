@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace BodyCamOverlay;
 
@@ -29,9 +30,11 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private GameObject? _cachedPlayer;
     private Transform? _cachedWeapon;
+    private readonly List<Transform> _weaponCandidates = new();
     private bool _weaponWasDrawn;
     private bool _overlayActive;
     private float _weaponPollTimer;
+    private float _nextWeaponCacheRefreshTime;
     private float _signalTimer;
     private float _emergencyTriggerTimer;
     private int _emergencyTriggerPresses;
@@ -58,6 +61,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         _weaponWasDrawn = false;
         _cachedWeapon = null;
         _cachedPlayer = null;
+        _weaponCandidates.Clear();
     }
 
     protected override void OnModKitUpdate()
@@ -200,8 +204,60 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
                 if (cam != null)
                     _cachedWeapon = FindWeapon(cam.transform);
             }
+
+            if (_cachedWeapon == null)
+                _cachedWeapon = FindCachedSceneWeapon();
         }
         catch { }
+    }
+
+    private Transform? FindCachedSceneWeapon()
+    {
+        if (Time.unscaledTime >= _nextWeaponCacheRefreshTime)
+            RefreshWeaponCache();
+
+        for (int i = _weaponCandidates.Count - 1; i >= 0; i--)
+        {
+            var weapon = _weaponCandidates[i];
+            if (weapon == null)
+            {
+                _weaponCandidates.RemoveAt(i);
+                continue;
+            }
+
+            if (weapon.gameObject.activeInHierarchy && IsWeaponName(weapon.name))
+                return weapon;
+        }
+
+        return null;
+    }
+
+    private void RefreshWeaponCache()
+    {
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + 2.5f;
+        _weaponCandidates.Clear();
+
+        var scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid()) return;
+
+        foreach (var root in scene.GetRootGameObjects())
+        {
+            if (root == null || !root.activeInHierarchy) continue;
+            CollectWeapons(root.transform);
+        }
+    }
+
+    private void CollectWeapons(Transform root)
+    {
+        if (IsWeaponName(root.name))
+        {
+            _weaponCandidates.Add(root);
+            return;
+        }
+
+        int count = root.childCount;
+        for (int i = 0; i < count; i++)
+            CollectWeapons(root.GetChild(i));
     }
 
     private static Transform? FindWeapon(Transform t)

@@ -11,6 +11,7 @@ public sealed class CommandEngine : IDisposable
     private volatile bool _stopping;
     private bool _disposed;
     private bool _startFailed;
+    private bool _speechUnavailable;
     private float _retryTimer;
     private const float RetryCooldown = 30f;
     private float _commandCooldownTimer;
@@ -23,7 +24,7 @@ public sealed class CommandEngine : IDisposable
 
     public void Start()
     {
-        if (IsRunning || _disposed || _startFailed || _engineThread != null) return;
+        if (IsRunning || _disposed || _startFailed || _speechUnavailable || _engineThread != null) return;
 
         _stopping = false;
         _engineThread = new Thread(RunEngine);
@@ -40,10 +41,12 @@ public sealed class CommandEngine : IDisposable
         }
         catch (Exception ex)
         {
-            _startFailed = true;
-            _retryTimer = RetryCooldown;
+            _speechUnavailable = ex is FileNotFoundException;
+            _startFailed = !_speechUnavailable;
+            _retryTimer = _speechUnavailable ? 0f : RetryCooldown;
             MelonLoader.MelonLogger.Warning($"Speech recognition unavailable: {ex.Message}");
             LastTransmission = "Voice: speech recognition unavailable";
+            IsRunning = false;
         }
         finally
         {
@@ -238,7 +241,7 @@ public sealed class CommandEngine : IDisposable
         if (_commandCooldownTimer > 0)
             _commandCooldownTimer -= UnityEngine.Time.unscaledDeltaTime;
 
-        if (_startFailed && !_disposed)
+        if (_startFailed && !_disposed && !_speechUnavailable)
         {
             _retryTimer -= UnityEngine.Time.unscaledDeltaTime;
             if (_retryTimer <= 0)
