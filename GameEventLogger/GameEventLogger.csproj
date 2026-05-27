@@ -54,6 +54,10 @@
       <HintPath>$(Il2CppAssemblies)UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.AssetBundleModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Il2Cppmscorlib">
       <HintPath>$(Il2CppAssemblies)Il2Cppmscorlib.dll</HintPath>
       <Private>false</Private>

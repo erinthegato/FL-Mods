@@ -35,7 +35,9 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private const float SceneInterval = 1.5f;
     private string[] _firstNames = Array.Empty<string>();
     private string[] _lastNames = Array.Empty<string>();
-    private int _loggedRoots;
+    private GameObject[] _cachedRoots = Array.Empty<GameObject>();
+    private int _rootsVersion;
+    private int _lastRootCount;
 
     // ── Panic overlay ──
     private float _panicFlashTimer;
@@ -83,6 +85,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         LoadNameFiles();
         SetupCrashHooks();
         CacheReflectionHandles();
+        MelonLogger.Msg($"[GameEventLogger] persistentDataPath: {Application.persistentDataPath}");
         MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm + MDT NPC records active.");
     }
 
@@ -373,18 +376,19 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             if (!scene.IsValid()) return;
 
-            var roots = scene.GetRootGameObjects();
-            if (_loggedRoots == 0)
+            int handle = scene.handle;
+            if (handle != _rootsVersion)
             {
-                _loggedRoots = 1;
-                MelonLogger.Msg($"[GameEventLogger] Scanning {roots.Length} root objects for NPCs...");
-                foreach (var r in roots)
+                _rootsVersion = handle;
+                _cachedRoots = scene.GetRootGameObjects();
+                if (_cachedRoots.Length != _lastRootCount)
                 {
-                    if (r == null) continue;
-                    MelonLogger.Msg($"[GameEventLogger]   Root: {r.name}");
-                    LogChildNames(r.transform, 1);
+                    _lastRootCount = _cachedRoots.Length;
+                    MelonLogger.Msg($"[GameEventLogger] Scene changed — {_lastRootCount} root objects");
                 }
             }
+
+            var roots = _cachedRoots;
 
             // Find NPC containers ("Npcs", "Names") and iterate their children
             foreach (var root in roots)
@@ -430,7 +434,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             if (!child.gameObject.activeInHierarchy) continue;
 
             string name = child.name;
-            if (name.Contains("NPC", StringComparison.OrdinalIgnoreCase) &&
+            if ((name.Contains("NPC", StringComparison.OrdinalIgnoreCase) ||
+                 name.Contains("npc", StringComparison.OrdinalIgnoreCase)) &&
                 !name.Contains("Manager", StringComparison.OrdinalIgnoreCase))
             {
                 int id = child.gameObject.GetInstanceID();
@@ -613,7 +618,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            // 1. Search all loaded scenes (FlSaveData may be in Game2, not active scene)
+            // 1. Quick scene search — FlSaveData may be in Game2
             for (int si = 0; si < UnityEngine.SceneManagement.SceneManager.sceneCount; si++)
             {
                 var s = UnityEngine.SceneManagement.SceneManager.GetSceneAt(si);
@@ -631,7 +636,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 }
             }
 
-            // 2. Search all loaded GameObjects via Resources
+            // 2. Resources search (catches DontDestroyOnLoad objects)
             try
             {
                 var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
@@ -649,20 +654,18 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
             }
             catch { }
 
-            // 3. Assembly scanning (last resort — wrap per-assembly in try-catch)
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            // 3. Find type in Assembly-CSharp and check for singleton Instance
+            var assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (assembly != null)
             {
-                if (asm.IsDynamic) continue;
                 System.Type[] types;
-                try { types = asm.GetTypes(); }
-                catch { continue; }
+                try { types = assembly.GetTypes(); } catch { types = Array.Empty<System.Type>(); }
 
                 foreach (var t in types)
                 {
                     if (!t.Name.Equals("FlSaveData", StringComparison.Ordinal)) continue;
-                    MelonLogger.Msg($"[GameEventLogger] Found FlSaveData type in {asm.GetName().Name}: {t.FullName}");
 
-                    // Check for static Instance property/field (singleton pattern)
                     var prop = t.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
                     if (prop != null)
                     {
@@ -687,115 +690,20 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                         }
                     }
 
-                    // Try non-generic FindObjectsOfType (doesn't require Component constraint)
-                    var nonGenericMethod = typeof(UnityEngine.Object)
-                        .GetMethods(BindingFlags.Public | BindingFlags.Static)
-                        .FirstOrDefault(m => m.Name == "FindObjectsOfType"
-                                          && !m.IsGenericMethodDefinition
-                                          && m.GetParameters().Length == 1
-                                          && m.GetParameters()[0].ParameterType == typeof(System.Type));
-                    if (nonGenericMethod != null)
+                    // Install Harmony hook to catch future creations
+                    var ctor = t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                        .FirstOrDefault(c => c.GetParameters().Length == 0);
+                    if (ctor != null)
                     {
-                        var results = nonGenericMethod.Invoke(null, new object[] { t }) as Array;
-                        if (results != null && results.Length > 0)
-                        {
-                            _flSaveDataInstance = results.GetValue(0);
-                            _flSaveDataType = t;
-                            MelonLogger.Msg($"[GameEventLogger] FlSaveData instance found via FindObjectsOfType(Type)");
-                            return;
-                        }
+                        _flSaveDataHarmony.Unpatch(ctor, HarmonyPatchType.Postfix, _flSaveDataHarmony.Id);
+                        _flSaveDataHarmony.Patch(ctor, postfix: new HarmonyMethod(typeof(GameEventLoggerMod)
+                            .GetMethod(nameof(FlSaveDataCtorPostfix), BindingFlags.NonPublic | BindingFlags.Static)));
+                        MelonLogger.Msg($"[GameEventLogger] Harmony hook installed on FlSaveData.ctor()");
+                        _flSaveDataSearched = true; // don't retry — hook will catch future creations
+                        return;
                     }
 
-                    // Try creating a new instance (data may populate from asset bundle)
-                    try
-                    {
-                        var instance = Activator.CreateInstance(t, nonPublic: true);
-                        if (instance != null)
-                        {
-                            _flSaveDataInstance = instance;
-                            _flSaveDataType = t;
-                            MelonLogger.Msg($"[GameEventLogger] FlSaveData instance created via Activator");
-                            return;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Msg($"[GameEventLogger] FlSaveData Activator.CreateInstance failed: {ex.Message}");
-                    }
-
-                    // Try Il2Cpp zero-arg constructor
-                    try
-                    {
-                        var ctor = t.GetConstructor(Type.EmptyTypes);
-                        if (ctor != null)
-                        {
-                            var instance = ctor.Invoke(null);
-                            if (instance != null)
-                            {
-                                _flSaveDataInstance = instance;
-                                _flSaveDataType = t;
-                                MelonLogger.Msg($"[GameEventLogger] FlSaveData instance created via default ctor");
-                                return;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Msg($"[GameEventLogger] FlSaveData default ctor failed: {ex.Message}");
-                    }
-
-                    // Static field scan: search every type for a static FlSaveData field
-                    MelonLogger.Msg($"[GameEventLogger] Scanning all types for static FlSaveData fields...");
-                    foreach (var scanAsm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        if (scanAsm.IsDynamic) continue;
-                        System.Type[] scanTypes;
-                        try { scanTypes = scanAsm.GetTypes(); }
-                        catch { continue; }
-
-                        foreach (var scanType in scanTypes)
-                        {
-                            try
-                            {
-                                foreach (var fi in scanType.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
-                                {
-                                    if (fi.FieldType != t) continue;
-                                    var val = fi.GetValue(null);
-                                    if (val != null)
-                                    {
-                                        _flSaveDataInstance = val;
-                                        _flSaveDataType = t;
-                                        MelonLogger.Msg($"[GameEventLogger] FlSaveData found in {scanType.FullName}.{fi.Name}");
-                                        return;
-                                    }
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    // Harmony hook: intercept constructor when game creates FlSaveData
-                    MelonLogger.Msg($"[GameEventLogger] Installing Harmony hook on FlSaveData constructor...");
-                    try
-                    {
-                        var ctors = t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                        foreach (var ctor in ctors)
-                        {
-                            if (ctor.GetParameters().Length > 0) continue;
-                            _flSaveDataHarmony.Unpatch(ctor, HarmonyPatchType.Postfix, _flSaveDataHarmony.Id);
-                            _flSaveDataHarmony.Patch(ctor, postfix: new HarmonyMethod(typeof(GameEventLoggerMod)
-                                .GetMethod(nameof(FlSaveDataCtorPostfix), BindingFlags.NonPublic | BindingFlags.Static)));
-                            MelonLogger.Msg($"[GameEventLogger] Harmony hook installed on FlSaveData.ctor()");
-                            _flSaveDataSearched = false; // allow retry
-                            break;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"[GameEventLogger] Harmony hook failed: {ex.Message}");
-                    }
-
-                    MelonLogger.Warning($"[GameEventLogger] FlSaveData: no instance exists at runtime. Game stores NPC data in level2 AssetBundle; using generated data.");
+                    MelonLogger.Warning("[GameEventLogger] FlSaveData type found — no singleton or constructor to hook");
                     break;
                 }
             }
