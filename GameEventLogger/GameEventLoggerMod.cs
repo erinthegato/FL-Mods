@@ -1,5 +1,7 @@
 using System.IO;
+using System.Diagnostics;
 using System.Reflection;
+using System.Threading.Tasks;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
@@ -25,15 +27,12 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private Transform? _cachedWeapon;
     private int _shotCount;
     private bool _panicFired;
-
-
-    // ── Panic overlay ──
-    private float _panicFlashTimer;
-
-    // ── Reflection handles (cached) ──
-    private MethodInfo? _playPanicTone;
+    private float _panicCooldownTimer;
+    private string _panicButtonDir = "";
+    private string _code99Dir = "";
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
+
 
     // ── Crash hooks ──
     private static string? _crashLogPath;
@@ -68,6 +67,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         SetupCrashHooks();
         CacheReflectionHandles();
+        CachePanicAudioPaths();
         MelonLogger.Msg($"[GameEventLogger] persistentDataPath: {Application.persistentDataPath}");
         MelonLogger.Msg("[GameEventLogger] Initialized. Panic alarm active.");
     }
@@ -77,20 +77,18 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         if (Config.PanicAlarmEnabled)
             PollPanicInput();
 
-        if (_panicFlashTimer > 0f)
-            _panicFlashTimer -= Time.unscaledDeltaTime;
-    }
-
-    protected override void OnModKitGui()
-    {
-        if (_panicFlashTimer > 0f)
-            DrawPanicOverlay();
+        if (_panicCooldownTimer > 0f)
+        {
+            _panicCooldownTimer -= Time.unscaledDeltaTime;
+            if (_panicCooldownTimer <= 0f)
+                _panicFired = false;
+        }
     }
 
     protected override void OnModKitDisabled()
     {
         _panicFired = false;
-        _panicFlashTimer = 0f;
+        _panicCooldownTimer = 0f;
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
@@ -115,15 +113,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
                 BindingFlags.Static | BindingFlags.NonPublic);
             _gpInstance = instProp?.GetValue(null);
             if (_gpInstance == null) return;
-
-            var daProp = gpType.GetProperty("DispatchAudio",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            var dispatchAudio = daProp?.GetValue(_gpInstance);
-            if (dispatchAudio != null)
-            {
-                _playPanicTone = dispatchAudio.GetType().GetMethod("PlayPanicTone",
-                    new[] { typeof(string) });
-            }
 
             _triggerPanic = gpType.GetMethod("TriggerPanic",
                 BindingFlags.NonPublic | BindingFlags.Instance);
@@ -225,15 +214,68 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private void FirePanic(string weapon)
     {
         _panicFired = true;
-        _panicFlashTimer = Config.PanicDuration;
+        _panicCooldownTimer = Math.Max(3f, Config.PanicDuration);
 
-        MelonLogger.Msg($"[GameEventLogger] PANIC: {weapon} fired {Config.ShotsToPanic} rounds — dispatching backup");
+        MelonLogger.Msg($"[GameEventLogger] PANIC: {weapon} fired {Config.ShotsToPanic} rounds - dispatching backup");
 
-        try { _playPanicTone?.Invoke(null, new object[] { "" }); } catch { }
+        _ = PlayPanicSequenceAsync();
         try { _triggerPanic?.Invoke(_gpInstance, null); } catch { }
 
         DispatchNativeBackup();
     }
+
+    private void CachePanicAudioPaths()
+    {
+        string root = FindGameRoot();
+        _panicButtonDir = Path.Combine(root, "DispatchAudio", "Panic Button");
+        _code99Dir = Path.Combine(_panicButtonDir, "Code99");
+    }
+
+    private async Task PlayPanicSequenceAsync()
+    {
+        string? tone = PickRandomWav(_panicButtonDir);
+        if (tone != null)
+            await PlayWavSyncAsync(tone);
+        else
+            MelonLogger.Warning($"[GameEventLogger] No panic button tones found in {_panicButtonDir}");
+
+        string? code99 = PickRandomWav(_code99Dir);
+        if (code99 != null)
+            await PlayWavSyncAsync(code99);
+        else
+            MelonLogger.Warning($"[GameEventLogger] No Code99 files found in {_code99Dir}");
+    }
+
+    private static string? PickRandomWav(string dir)
+    {
+        if (!Directory.Exists(dir)) return null;
+        var files = Directory.GetFiles(dir, "*.wav", SearchOption.TopDirectoryOnly);
+        if (files.Length == 0) return null;
+        return files[UnityEngine.Random.Range(0, files.Length)];
+    }
+
+    private static async Task PlayWavSyncAsync(string path)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("powershell")
+                {
+                    Arguments = $"-NoProfile -Command \"(New-Object Media.SoundPlayer '{path.Replace("'", "''")}').PlaySync()\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                proc?.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[GameEventLogger] Panic audio failed: {ex.Message}");
+            }
+        });
+    }
+
 
     private void DispatchNativeBackup()
     {
@@ -283,51 +325,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         }
     }
 
-
-    // ═══════════════════════════════════════════════════
-    //  PANIC OVERLAY
-    // ═══════════════════════════════════════════════════
-
-    private static GUIStyle? _panicStyle;
-    private static GUIStyle? _panicSubStyle;
-    private static Texture2D? _panicOverlay;
-
-    private static void EnsurePanicStyles()
-    {
-        if (_panicOverlay != null) return;
-
-        _panicOverlay = new Texture2D(1, 1);
-        _panicOverlay.SetPixel(0, 0, new Color(1f, 0f, 0f, 0.3f));
-        _panicOverlay.Apply();
-
-        _panicStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 48, fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-            normal = { textColor = Color.red }
-        };
-        _panicSubStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 24, fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleCenter,
-            normal = { textColor = Color.yellow }
-        };
-    }
-
-    private void DrawPanicOverlay()
-    {
-        EnsurePanicStyles();
-
-        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), _panicOverlay, ScaleMode.StretchToFill);
-
-        if (_panicStyle == null) return;
-        float pulse = Mathf.PingPong(Time.unscaledTime * 4f, 1f);
-        _panicStyle.normal.textColor = Color.Lerp(Color.red, Color.white, pulse);
-
-        float cy = Screen.height * 0.28f;
-        GUI.Label(new Rect(0, cy, Screen.width, 60), "PANIC ALARM", _panicStyle);
-        GUI.Label(new Rect(0, cy + 70, Screen.width, 40), "BACKUP DISPATCHED", _panicSubStyle);
-    }
 
     // ═══════════════════════════════════════════════════
     //  CRASH HOOKS

@@ -10,4 +10,5 @@ public sealed class NPCAIConfig
     public string ApiEndpoint { get; set; } = "https://openrouter.ai/api";
     public string ApiModel { get; set; } = "deepseek/deepseek-v4-flash";
     public float AudioVolume { get; set; } = 0.7f;
+    public float InteractionRange { get; set; } = 5f;
 }

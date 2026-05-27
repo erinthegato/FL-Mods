@@ -43,7 +43,11 @@ public sealed record NPCInfo(
     bool HasFirearmsLicense,
     bool IsWanted,
     bool IsMissing,
-    DateTime DetectedAt
+    DateTime DetectedAt,
+    string RegistrationStatus = "Valid",
+    string LicenseStatus = "Valid",
+    string LicensePlate = "",
+    bool HasWeaponLicense = false
 );
 
 public sealed record ArrestRecord(

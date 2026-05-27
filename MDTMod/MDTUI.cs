@@ -8,10 +8,10 @@ namespace MDTMod;
 
 public sealed class MDTUI
 {
-    private enum Tab { Charges, Citations, Court, Records }
+    private enum Tab { Filing, Court, Records }
     private enum MDTRole { Police, Fire, EMS }
 
-    private Tab _activeTab = Tab.Charges;
+    private Tab _activeTab = Tab.Filing;
     private Vector2 _scrollPos;
     private string _subjectName = "";
     private string _firstName = "";
@@ -21,6 +21,9 @@ public sealed class MDTUI
     private float _statusTimer;
     private int _selectedChargeIndex = -1;
     private int _selectedCitationIndex = -1;
+    private int _filingModeIndex;
+    private string _chargeSearch = "";
+    private bool _showChargeDropdown = true;
     private string[] _cachedSubjects = Array.Empty<string>();
     private int _lastDataVersion = -1;
     private bool _chargeSubjectSelected;
@@ -32,7 +35,8 @@ public sealed class MDTUI
 
     private List<USCharge> _pendingCharges = new();
     private bool _showArrestNarrative;
-    private string _arrestLocation = "";
+    private string _locationZip = "";
+    private string _locationStreet = "";
     private string _arrestNature = "";
     private string _arrestDOB = "";
     private string _arrestLicense = "";
@@ -40,17 +44,31 @@ public sealed class MDTUI
     private string _witnessStatement = "";
     private List<WitnessStatement> _arrestWitnesses = new();
 
-    private static readonly ChargeCategory[] CategoryOrder =
-        { ChargeCategory.Traffic, ChargeCategory.Registration, ChargeCategory.Criminal,
-          ChargeCategory.Drug, ChargeCategory.Weapon, ChargeCategory.PublicOrder };
     private static readonly string[] RoleNames = { "LAW ENFORCEMENT", "FIRE RESCUE", "EMS" };
-    private static readonly string[] TabNames = { "CHARGES", "CITATIONS", "COURT", "RECORDS" };
+    private static readonly string[] TabNames = { "FILING", "COURT", "RECORDS" };
+    private static readonly string[] FilingModes = { "Arrest / Charges", "Citation" };
+    private static readonly string[] RegistrationStatuses = { "Valid", "Expired", "Suspended", "Revoked" };
+    private static readonly string[] WantedStatuses = { "Clear", "Wanted", "Missing" };
+    private static readonly string[] LicenseStatuses = { "Valid", "Suspended", "Revoked", "Expired" };
+    private static readonly string[] StreetOptions =
+    {
+        "suburbs west", "suburbs east", "route 600", "interstate 69", "cod town",
+        "route 20", "beach town", "port", "city", "city marina"
+    };
     private const float TabW = 120;
 
     private bool _showModifyView;
     private string _modifySubjectName = "";
     private string _modifyNewFirstName = "";
     private string _modifyNewLastName = "";
+    private bool _showNewRecordForm;
+    private string _recordFirstName = "";
+    private string _recordLastName = "";
+    private string _recordRegistrationStatus = "Valid";
+    private string _recordWantedStatus = "Clear";
+    private string _recordLicenseStatus = "Valid";
+    private string _recordLicensePlate = "";
+    private bool _recordWeaponLicense;
 
     private Color _bgColor, _borderColor, _accentColor, _textColor;
     private float _roleTimer;
@@ -83,19 +101,20 @@ public sealed class MDTUI
     private static GUIStyle _npcStyle = null!;
     private static bool _stylesInit;
 
-    private static void InitTex(ref Texture2D tex)
+    private static Texture2D InitTex(Texture2D? tex)
     {
-        if (tex != null) return;
+        if (tex != null) return tex;
         tex = new Texture2D(1, 1);
         tex.hideFlags = HideFlags.DontSave;
+        return tex;
     }
 
     private static void CacheTextures(Color bg, Color accent)
     {
         if (_cachedBg == bg && _cachedAccent == accent && _texBg != null) return;
-        InitTex(ref _texBg);
-        InitTex(ref _texBorder);
-        InitTex(ref _texLine);
+        _texBg = InitTex(_texBg);
+        _texBorder = InitTex(_texBorder);
+        _texLine = InitTex(_texLine);
         _texBg.SetPixel(0, 0, bg); _texBg.Apply();
         _texBorder.SetPixel(0, 0, accent); _texBorder.Apply();
         _texLine.SetPixel(0, 0, accent); _texLine.Apply();
@@ -108,7 +127,7 @@ public sealed class MDTUI
 
     private static Texture2D HighlightTex(Color accent)
     {
-        InitTex(ref _texHighlight);
+        _texHighlight = InitTex(_texHighlight);
         Color target = accent * 0.4f;
         if (!_highlightDirty && _cachedHighlightColor == target)
             return _texHighlight;
@@ -225,7 +244,7 @@ public sealed class MDTUI
             return;
         }
 
-        if (Event.current.isKey && _activeTab is Tab.Charges or Tab.Citations)
+        if (Event.current.isKey && _activeTab == Tab.Filing)
         {
             if (Event.current.type == EventType.KeyDown &&
                 Event.current.keyCode is KeyCode.Return or KeyCode.Tab)
@@ -259,8 +278,7 @@ public sealed class MDTUI
 
         switch (_activeTab)
         {
-            case Tab.Charges: RenderChargesTab(contentRect.width - 20); break;
-            case Tab.Citations: RenderCitationsTab(contentRect.width - 20); break;
+            case Tab.Filing: RenderFilingTab(contentRect.width - 20); break;
             case Tab.Court: RenderCourtTab(contentRect.width - 20); break;
             case Tab.Records: RenderRecordsTab(contentRect.width - 20); break;
         }
@@ -372,11 +390,28 @@ public sealed class MDTUI
                     _lastName = "";
                     _selectedChargeIndex = -1;
                     _selectedCitationIndex = -1;
+                    _chargeSearch = "";
+                    _showNewRecordForm = false;
                     ClearArrestState();
                 }
                 _activeTab = (Tab)i;
             }
         }
+    }
+
+    private void RenderFilingTab(float width)
+    {
+        _labelStyle.normal.textColor = _textColor;
+        GUI.Label(new Rect(0, 5, 70, 22), "Type:", _labelStyle);
+        _filingModeIndex = GUI.SelectionGrid(new Rect(75, 5, 300, 24), _filingModeIndex, FilingModes, 2);
+
+        GUI.DrawTexture(new Rect(0, 36, width, 1), _texLine);
+        GUI.BeginGroup(new Rect(0, 44, width, 3900));
+        if (_filingModeIndex == 0)
+            RenderChargesTab(width);
+        else
+            RenderCitationsTab(width);
+        GUI.EndGroup();
     }
 
     private void RenderChargesTab(float width)
@@ -490,41 +525,28 @@ public sealed class MDTUI
         GUI.Label(new Rect(0, yPos, width, 22), "SELECT CHARGE:", _boldLabel);
         yPos += 28;
 
-        _catLabel.normal.textColor = _textColor;
+        GUI.Label(new Rect(10, yPos, 70, 22), "Search:", _labelStyle);
+        _chargeSearch = GUI.TextField(new Rect(85, yPos, 260, 22), _chargeSearch, _inputField);
+        if (GUI.Button(new Rect(355, yPos, 90, 22), _showChargeDropdown ? "HIDE" : "SHOW"))
+            _showChargeDropdown = !_showChargeDropdown;
+        yPos += 28;
 
-        foreach (var cat in CategoryOrder)
+        if (_showChargeDropdown)
         {
-            var catCharges = USCharges.ByCategory(cat);
-            if (catCharges.Count == 0) continue;
-
-            GUI.Label(new Rect(10, yPos, width - 20, 18), $"-- {cat} --", _catLabel);
-            yPos += 22;
-
-            foreach (var ch in catCharges)
+            var matches = FilterCharges(_chargeSearch, _filingModeIndex == 1).Take(18).ToList();
+            foreach (var ch in matches)
             {
-                string cls = ch.Class switch
-                {
-                    ChargeClass.Infraction => "INF",
-                    ChargeClass.Misdemeanor => "MIS",
-                    ChargeClass.Felony => "FEL",
-                    _ => ""
-                };
-
-                string line = $"{ch.Name,-42} [{cls}] ${ch.FineMin}-${ch.FineMax}";
-                if (ch.JailDaysMax > 0)
-                    line += $"  {ch.JailDaysMin}-{ch.JailDaysMax}d";
-
+                string line = ChargeLine(ch);
                 int idx = USCharges.All.IndexOf(ch);
                 bool selected = idx == _selectedChargeIndex;
                 var style = selected ? _selectedBtn : _chargeBtn;
                 style.normal.textColor = selected ? Color.white : _textColor;
                 style.normal.background = selected ? HighlightTex(_accentColor) : null;
 
-                if (GUI.Button(new Rect(10, yPos, width - 20, 20), line, style))
+                if (GUI.Button(new Rect(10, yPos, width - 20, 22), line, style))
                     _selectedChargeIndex = idx;
-                yPos += 22;
+                yPos += 24;
             }
-            yPos += 4;
         }
 
         yPos += 10;
@@ -563,7 +585,8 @@ public sealed class MDTUI
                     }))
             {
                 _scrollPos = Vector2.zero;
-                _arrestLocation = "";
+                _locationZip = "";
+                _locationStreet = "";
                 _arrestNature = "";
                 _arrestDOB = "";
                 _arrestLicense = "";
@@ -617,16 +640,19 @@ public sealed class MDTUI
         _officerName = GUI.TextField(new Rect(105, y, 250, 22), _officerName, _inputField);
         y += 28;
 
-        GUI.Label(new Rect(0, y, 100, 22), "Location:", _labelStyle);
-        _arrestLocation = GUI.TextField(new Rect(105, y, width - 115, 22), _arrestLocation, _inputField);
-        y += 28;
+        GUI.Label(new Rect(0, y, 100, 22), "ZIP:", _labelStyle);
+        _locationZip = FormatZip(GUI.TextField(new Rect(105, y, 90, 22), _locationZip, 5, _inputField));
+        GUI.Label(new Rect(215, y, 90, 22), "Street:", _labelStyle);
+        _locationStreet = GUI.TextField(new Rect(300, y, 180, 22), _locationStreet, _inputField);
+        DrawStreetSuggestions(300, y + 24, 180);
+        y += 92;
 
         GUI.Label(new Rect(0, y, 100, 22), "DOB:", _labelStyle);
         _arrestDOB = GUI.TextField(new Rect(105, y, 200, 22), _arrestDOB, _inputField);
         y += 28;
 
         GUI.Label(new Rect(0, y, 100, 22), "License Plate:", _labelStyle);
-        _arrestLicense = GUI.TextField(new Rect(105, y, 200, 22), _arrestLicense, _inputField);
+        _arrestLicense = FormatPlate(GUI.TextField(new Rect(105, y, 110, 22), _arrestLicense, 7, _inputField));
         y += 28;
 
         GUI.Label(new Rect(0, y, width, 22), "Nature of Arrest:", _labelStyle);
@@ -705,7 +731,7 @@ public sealed class MDTUI
                 "",
                 fullName,
                 DateTime.Now,
-                _arrestLocation,
+                BuildLocation(),
                 _arrestNature,
                 _arrestDOB,
                 _arrestLicense,
@@ -736,7 +762,8 @@ public sealed class MDTUI
     {
         _pendingCharges.Clear();
         _showArrestNarrative = false;
-        _arrestLocation = "";
+        _locationZip = "";
+        _locationStreet = "";
         _arrestNature = "";
         _arrestDOB = "";
         _arrestLicense = "";
@@ -753,7 +780,8 @@ public sealed class MDTUI
         _firstName = "";
         _lastName = "";
         _showArrestNarrative = false;
-        _arrestLocation = "";
+        _locationZip = "";
+        _locationStreet = "";
         _arrestNature = "";
         _arrestDOB = "";
         _arrestLicense = "";
@@ -777,36 +805,38 @@ public sealed class MDTUI
     private void RenderCitationsTab(float width)
     {
         _labelStyle.normal.textColor = _textColor;
-        GUI.Label(new Rect(0, 5, 80, 22), "First Name:", _labelStyle);
-        _firstName = GUI.TextField(new Rect(85, 5, 160, 22), _firstName, _inputField);
+        DrawNameInputs(0, 5, ref _firstName, ref _lastName);
 
-        GUI.Label(new Rect(255, 5, 80, 22), "Last Name:", _labelStyle);
-        _lastName = GUI.TextField(new Rect(340, 5, 160, 22), _lastName, _inputField);
+        GUI.Label(new Rect(0, 98, 120, 22), "Your Name:", _labelStyle);
+        _officerName = GUI.TextField(new Rect(130, 98, 250, 22), _officerName, _inputField);
 
-        GUI.Label(new Rect(0, 35, 120, 22), "Your Name:", _labelStyle);
-        _officerName = GUI.TextField(new Rect(130, 35, 250, 22), _officerName, _inputField);
-
-        float y = 70;
+        float y = 132;
         _boldLabel.normal.textColor = _accentColor;
-        GUI.Label(new Rect(0, y, width, 22), "TRAFFIC CITATIONS:", _boldLabel);
+        GUI.Label(new Rect(0, y, width, 22), "SEARCH CITATION:", _boldLabel);
         y += 28;
 
-        var traffic = USCharges.ByCategory(ChargeCategory.Traffic);
-        var reg = USCharges.ByCategory(ChargeCategory.Registration);
+        GUI.Label(new Rect(10, y, 70, 22), "Search:", _labelStyle);
+        _chargeSearch = GUI.TextField(new Rect(85, y, 260, 22), _chargeSearch, _inputField);
+        if (GUI.Button(new Rect(355, y, 90, 22), _showChargeDropdown ? "HIDE" : "SHOW"))
+            _showChargeDropdown = !_showChargeDropdown;
+        y += 28;
 
-        foreach (var cit in traffic.Concat(reg))
+        if (_showChargeDropdown)
         {
-            string line = $"{cit.Name,-40} ${cit.FineMin}-${cit.FineMax}  [{cit.Statute}]";
+            foreach (var cit in FilterCharges(_chargeSearch, citationOnly: true).Take(18))
+            {
+                string line = ChargeLine(cit);
 
-            int idx = USCharges.All.IndexOf(cit);
-            bool selected = idx == _selectedCitationIndex;
-            var style = selected ? _selectedBtn : _chargeBtn;
-            style.normal.textColor = selected ? Color.white : _textColor;
-            style.normal.background = selected ? HighlightTex(_accentColor) : null;
+                int idx = USCharges.All.IndexOf(cit);
+                bool selected = idx == _selectedCitationIndex;
+                var style = selected ? _selectedBtn : _chargeBtn;
+                style.normal.textColor = selected ? Color.white : _textColor;
+                style.normal.background = selected ? HighlightTex(_accentColor) : null;
 
-            if (GUI.Button(new Rect(10, y, width - 20, 20), line, style))
-                _selectedCitationIndex = idx;
-            y += 22;
+                if (GUI.Button(new Rect(10, y, width - 20, 22), line, style))
+                    _selectedCitationIndex = idx;
+                y += 24;
+            }
         }
 
         y += 10;
@@ -911,6 +941,21 @@ public sealed class MDTUI
         float y = 35;
         _labelStyle.normal.textColor = _textColor;
 
+        if (GUI.Button(new Rect(10, y, 160, 26), _showNewRecordForm ? "CANCEL NEW RECORD" : "MAKE NEW RECORD"))
+        {
+            _showNewRecordForm = !_showNewRecordForm;
+            if (_showNewRecordForm)
+                SeedNewRecordForm();
+        }
+        y += 34;
+
+        if (_showNewRecordForm)
+        {
+            y = RenderNewRecordForm(width, y);
+            GUI.DrawTexture(new Rect(0, y, width, 1), _texLine);
+            y += 10;
+        }
+
         // NPC Info section at top
         if (hasNpcRecords)
         {
@@ -929,8 +974,7 @@ public sealed class MDTUI
                 if (npc.IsWanted) status += " [WANTED]";
                 if (npc.IsMissing) status += " [MISSING]";
 
-                string line = $"{npc.Name,-22} Plate: {npc.Registration,-10} Ins: {(npc.HasInsurance ? "Y" : "N")} " +
-                              $"Firearm: {(npc.HasFirearmsLicense ? "Y" : "N")}{status}";
+                string line = $"{npc.Name} | Plate: {DisplayPlate(npc)} | Reg: {npc.RegistrationStatus} | Lic: {npc.LicenseStatus} | Weapon: {(npc.HasWeaponLicense || npc.HasFirearmsLicense ? "Y" : "N")}{status}";
 
                 Color itemColor = npc.IsWanted ? Color.red : npc.IsMissing ? Color.yellow : _textColor;
                 _npcStyle.normal.textColor = itemColor;
@@ -986,8 +1030,7 @@ public sealed class MDTUI
                 string flags = "";
                 if (npcInfo.IsWanted) flags += " [WANTED]";
                 if (npcInfo.IsMissing) flags += " [MISSING]";
-                summary = $"{name,-22} Plate: {npcInfo.Registration,-10} Ins: {(npcInfo.HasInsurance ? "Y" : "N")} " +
-                          $"Firearm: {(npcInfo.HasFirearmsLicense ? "Y" : "N")}{flags}";
+                summary = $"{name} | Plate: {DisplayPlate(npcInfo)} | Reg: {npcInfo.RegistrationStatus} | Lic: {npcInfo.LicenseStatus} | Weapon: {(npcInfo.HasWeaponLicense || npcInfo.HasFirearmsLicense ? "Y" : "N")}{flags}";
                 if (npcInfo.IsWanted) nameColor = Color.red;
                 else if (npcInfo.IsMissing) nameColor = Color.yellow;
             }
@@ -1006,7 +1049,8 @@ public sealed class MDTUI
                 _lastName = parts.Length > 1 ? string.Join(" ", parts.Skip(1)) : "";
                 _subjectName = name;
                 _chargeSubjectSelected = true;
-                _activeTab = Tab.Charges;
+                _activeTab = Tab.Filing;
+                _filingModeIndex = 0;
                 SetStatus($"Viewing records for {name}");
             }
 
@@ -1094,6 +1138,177 @@ public sealed class MDTUI
         }
     }
 
+    private float RenderNewRecordForm(float width, float y)
+    {
+        _boldLabel.normal.textColor = _accentColor;
+        GUI.Label(new Rect(10, y, width - 20, 22), "NEW CITIZEN RECORD", _boldLabel);
+        y += 28;
+
+        DrawNameInputs(10, y, ref _recordFirstName, ref _recordLastName);
+        y += 92;
+
+        GUI.Label(new Rect(10, y, 130, 22), "Registration:", _labelStyle);
+        _recordRegistrationStatus = DrawOptionRow(new Rect(145, y, 360, 22), _recordRegistrationStatus, RegistrationStatuses);
+        y += 28;
+
+        GUI.Label(new Rect(10, y, 130, 22), "Wanted:", _labelStyle);
+        _recordWantedStatus = DrawOptionRow(new Rect(145, y, 300, 22), _recordWantedStatus, WantedStatuses);
+        y += 28;
+
+        GUI.Label(new Rect(10, y, 130, 22), "Driver License:", _labelStyle);
+        _recordLicenseStatus = DrawOptionRow(new Rect(145, y, 360, 22), _recordLicenseStatus, LicenseStatuses);
+        y += 28;
+
+        GUI.Label(new Rect(10, y, 130, 22), "License Plate:", _labelStyle);
+        _recordLicensePlate = FormatPlate(GUI.TextField(new Rect(145, y, 110, 22), _recordLicensePlate, 7, _inputField));
+        _recordWeaponLicense = GUI.Toggle(new Rect(275, y, 180, 22), _recordWeaponLicense, "Weapon License");
+        y += 34;
+
+        if (GUI.Button(new Rect(10, y, 150, 28), "SAVE RECORD",
+                new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, normal = { textColor = Color.white, background = HighlightTex(Color.green * 0.6f) }, hover = { textColor = Color.white } }))
+        {
+            string fullName = BuildName(_recordFirstName, _recordLastName);
+            if (string.IsNullOrWhiteSpace(fullName))
+            {
+                SetStatus("Enter first and last name.");
+            }
+            else
+            {
+                bool wanted = _recordWantedStatus.Equals("Wanted", StringComparison.OrdinalIgnoreCase);
+                bool missing = _recordWantedStatus.Equals("Missing", StringComparison.OrdinalIgnoreCase);
+                NPCDataStore.AddNpcRecord(new NPCInfo(
+                    fullName,
+                    _recordLicensePlate,
+                    !_recordRegistrationStatus.Equals("Expired", StringComparison.OrdinalIgnoreCase),
+                    _recordWeaponLicense,
+                    wanted,
+                    missing,
+                    DateTime.Now,
+                    _recordRegistrationStatus,
+                    _recordLicenseStatus,
+                    _recordLicensePlate,
+                    _recordWeaponLicense));
+                _lastDataVersion = -1;
+                _showNewRecordForm = false;
+                SetStatus($"Record saved for {fullName}");
+            }
+        }
+
+        return y + 42;
+    }
+
+    private void SeedNewRecordForm()
+    {
+        _recordFirstName = _firstName;
+        _recordLastName = _lastName;
+        _recordRegistrationStatus = "Valid";
+        _recordWantedStatus = "Clear";
+        _recordLicenseStatus = "Valid";
+        _recordLicensePlate = "";
+        _recordWeaponLicense = false;
+    }
+
+    private string DrawOptionRow(Rect rect, string current, string[] options)
+    {
+        int selected = Math.Max(0, Array.IndexOf(options, current));
+        selected = GUI.SelectionGrid(rect, selected, options, options.Length);
+        return options[Math.Clamp(selected, 0, options.Length - 1)];
+    }
+
+    private static string DisplayPlate(NPCInfo npc) =>
+        !string.IsNullOrWhiteSpace(npc.LicensePlate) ? npc.LicensePlate : npc.Registration;
+
+    private void DrawNameInputs(float x, float y, ref string first, ref string last)
+    {
+        GUI.Label(new Rect(x, y, 80, 22), "First:", _labelStyle);
+        first = GUI.TextField(new Rect(x + 85, y, 160, 22), first, _inputField);
+        GUI.Label(new Rect(x + 255, y, 70, 22), "Last:", _labelStyle);
+        last = GUI.TextField(new Rect(x + 325, y, 160, 22), last, _inputField);
+
+        var fnSug = NameListLoader.MatchFirstNames(first);
+        var lnSug = NameListLoader.MatchLastNames(last);
+        _sugStyle.normal.textColor = _textColor;
+        _sugStyle.normal.background = HighlightTex(_accentColor * 0.3f);
+        for (int i = 0; i < fnSug.Count && i < 3; i++)
+            if (GUI.Button(new Rect(x + 85, y + 25 + i * 19, 160, 18), fnSug[i], _sugStyle))
+                first = fnSug[i];
+        for (int i = 0; i < lnSug.Count && i < 3; i++)
+            if (GUI.Button(new Rect(x + 325, y + 25 + i * 19, 160, 18), lnSug[i], _sugStyle))
+                last = lnSug[i];
+    }
+
+    private static string BuildName(string first, string last) =>
+        $"{first.Trim()} {last.Trim()}".Trim();
+
+    private static IEnumerable<USCharge> FilterCharges(string query, bool citationOnly)
+    {
+        IEnumerable<USCharge> source = USCharges.All;
+        if (citationOnly)
+            source = source.Where(c => c.Category is ChargeCategory.Traffic or ChargeCategory.Registration);
+
+        if (string.IsNullOrWhiteSpace(query))
+            return source;
+
+        query = query.Trim();
+        return source.Where(c =>
+            c.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            c.Statute.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            c.Category.ToString().Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ChargeLine(USCharge charge)
+    {
+        string cls = charge.Class switch
+        {
+            ChargeClass.Infraction => "INF",
+            ChargeClass.Misdemeanor => "MIS",
+            ChargeClass.Felony => "FEL",
+            _ => ""
+        };
+        string line = $"{charge.Name} [{cls}] ${charge.FineMin}-${charge.FineMax} ({charge.Statute})";
+        if (charge.JailDaysMax > 0)
+            line += $" {charge.JailDaysMin}-{charge.JailDaysMax}d";
+        return line;
+    }
+
+    private static string FormatPlate(string value)
+    {
+        string digits = new string((value ?? "").Where(char.IsDigit).Take(6).ToArray());
+        return digits.Length > 3 ? $"{digits[..3]}-{digits[3..]}" : digits;
+    }
+
+    private static string FormatZip(string value)
+    {
+        string digits = new string((value ?? "").Where(char.IsDigit).Take(4).ToArray());
+        return digits.Length > 2 ? $"{digits[..2]}-{digits[2..]}" : digits;
+    }
+
+    private string BuildLocation()
+    {
+        string zip = _locationZip.Trim();
+        string street = _locationStreet.Trim();
+        if (string.IsNullOrWhiteSpace(zip)) return street;
+        if (string.IsNullOrWhiteSpace(street)) return zip;
+        return $"{zip} {street}";
+    }
+
+    private void DrawStreetSuggestions(float x, float y, float w)
+    {
+        if (string.IsNullOrWhiteSpace(_locationStreet)) return;
+        var matches = StreetOptions
+            .Where(s => s.Contains(_locationStreet, StringComparison.OrdinalIgnoreCase))
+            .Take(3)
+            .ToList();
+        for (int i = 0; i < matches.Count; i++)
+        {
+            if (GUI.Button(new Rect(x, y + i * 19, w, 18), matches[i], _sugStyle))
+            {
+                _locationStreet = matches[i];
+                GUI.FocusControl(null);
+            }
+        }
+    }
+
     private void RenderModifyView()
     {
         int margin = 40;
@@ -1113,17 +1328,14 @@ public sealed class MDTUI
         y += 32;
 
         _labelStyle.normal.textColor = _textColor;
-        GUI.Label(new Rect(x, y, 80, 22), "First Name:", _labelStyle);
-        _modifyNewFirstName = GUI.TextField(new Rect(x + 85, y, 160, 22), _modifyNewFirstName, _inputField);
-        GUI.Label(new Rect(x + 255, y, 80, 22), "Last Name:", _labelStyle);
-        _modifyNewLastName = GUI.TextField(new Rect(x + 340, y, 160, 22), _modifyNewLastName, _inputField);
+        DrawNameInputs(x, y, ref _modifyNewFirstName, ref _modifyNewLastName);
 
         if (GUI.Button(new Rect(x + 520, y, 100, 22), "PHOTO"))
         {
             _photoBrowser.Load();
             _photoBrowserVisible = true;
         }
-        y += 32;
+        y += 96;
 
         Texture2D? photoTex = GetOrLoadPhoto(_modifySubjectName);
         if (photoTex != null)
