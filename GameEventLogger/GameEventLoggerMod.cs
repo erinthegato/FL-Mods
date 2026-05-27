@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using FlashingLights.ModKit.Core;
+using HarmonyLib;
 using MDTMod;
 using MelonLoader;
 using UnityEngine;
@@ -29,11 +30,12 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private bool _panicFired;
 
     // ── AI names → MDT ──
-    private readonly HashSet<string> _seenAINames = new();
+    private readonly HashSet<int> _seenAINames = new();
     private float _sceneTimer;
     private const float SceneInterval = 1.5f;
     private string[] _firstNames = Array.Empty<string>();
     private string[] _lastNames = Array.Empty<string>();
+    private int _loggedRoots;
 
     // ── Panic overlay ──
     private float _panicFlashTimer;
@@ -42,9 +44,10 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private MethodInfo? _playPanicTone;
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
-    private bool _flSaveDataSearched;
     private object? _flSaveDataInstance;
     private System.Type? _flSaveDataType;
+    private bool _flSaveDataSearched;
+    private readonly HarmonyLib.Harmony _flSaveDataHarmony = new("GameEventLogger.FlSaveData");
 
     // ── Crash hooks ──
     private static string? _crashLogPath;
@@ -115,6 +118,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _shotCount = 0;
+        _flSaveDataHarmony.UnpatchSelf();
 
         if (_logCallback != null)
             Application.remove_logMessageReceived(_logCallback);
@@ -161,15 +165,43 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
+            string modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
+            string gameRootDir = Path.GetDirectoryName(modDir) ?? ".";
 
-            string fnPath = Path.Combine(dir, "AI_First_names.txt");
-            string lnPath = Path.Combine(dir, "Ai_Last_Names.txt");
+            string[] searchPaths = new[]
+            {
+                Path.Combine(modDir, "AI_First_names.txt"),
+                Path.Combine(gameRootDir, "AI_First_names.txt"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                             "CivIDs-Flashing Lights", "AI_First_names.txt")
+            };
 
-            if (File.Exists(fnPath))
+            string[] searchPathsLast = new[]
+            {
+                Path.Combine(modDir, "Ai_Last_Names.txt"),
+                Path.Combine(gameRootDir, "Ai_Last_Names.txt"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                             "CivIDs-Flashing Lights", "Ai_Last_Names.txt")
+            };
+
+            string? fnPath = searchPaths.FirstOrDefault(File.Exists);
+            string? lnPath = searchPathsLast.FirstOrDefault(File.Exists);
+
+            if (fnPath != null)
                 _firstNames = File.ReadAllLines(fnPath);
-            if (File.Exists(lnPath))
+            if (lnPath != null)
                 _lastNames = File.ReadAllLines(lnPath);
+
+            if (_firstNames.Length == 0)
+            {
+                _firstNames = new[] { "James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda",
+                                      "David", "Elizabeth", "William", "Barbara", "Richard", "Susan", "Joseph", "Jessica" };
+            }
+            if (_lastNames.Length == 0)
+            {
+                _lastNames = new[] { "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+                                     "Rodriguez", "Martinez", "Hernandez", "Lopez", "Wilson", "Anderson", "Thomas", "Taylor" };
+            }
 
             MelonLogger.Msg($"[GameEventLogger] Loaded {_firstNames.Length} first names, {_lastNames.Length} last names");
         }
@@ -338,35 +370,88 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            if (_seenAINames.Count > 500) _seenAINames.Clear();
-
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             if (!scene.IsValid()) return;
+
             var roots = scene.GetRootGameObjects();
+            if (_loggedRoots == 0)
+            {
+                _loggedRoots = 1;
+                MelonLogger.Msg($"[GameEventLogger] Scanning {roots.Length} root objects for NPCs...");
+                foreach (var r in roots)
+                {
+                    if (r == null) continue;
+                    MelonLogger.Msg($"[GameEventLogger]   Root: {r.name}");
+                    LogChildNames(r.transform, 1);
+                }
+            }
+
+            // Find NPC containers ("Npcs", "Names") and iterate their children
             foreach (var root in roots)
             {
                 if (root == null) continue;
-                WalkForAINames(root.transform);
+                string rn = root.name;
+                if (!rn.Equals("Npcs", StringComparison.OrdinalIgnoreCase) &&
+                    !rn.Equals("Names", StringComparison.OrdinalIgnoreCase)) continue;
+                WalkNpcsContainer(root.transform);
+            }
+
+            // Also scan all objects for NPC-containing names (like Smoke_Diner_NPC-Pos)
+            foreach (var root in roots)
+            {
+                if (root == null) continue;
+                WalkForNpcMarkers(root.transform);
             }
         }
         catch { }
     }
 
-    private void WalkForAINames(Transform t)
+    private void WalkNpcsContainer(Transform container)
+    {
+        for (int i = 0; i < container.childCount; i++)
+        {
+            var child = container.GetChild(i);
+            if (child == null) continue;
+            if (!child.gameObject.activeInHierarchy) continue;
+
+            int id = child.gameObject.GetInstanceID();
+            if (!_seenAINames.Add(id)) continue;
+
+            CreateNpcRecord(child.gameObject);
+        }
+    }
+
+    private void WalkForNpcMarkers(Transform t)
     {
         for (int i = 0; i < t.childCount; i++)
         {
             var child = t.GetChild(i);
             if (child == null) continue;
             if (!child.gameObject.activeInHierarchy) continue;
-            var name = child.name;
-            if ((name.Contains("AI-Names-M generated") || name.Contains("AI-Names-F generated")) &&
-                _seenAINames.Add(name))
+
+            string name = child.name;
+            if (name.Contains("NPC", StringComparison.OrdinalIgnoreCase) &&
+                !name.Contains("Manager", StringComparison.OrdinalIgnoreCase))
             {
-                MelonLogger.Msg($"[GameEventLogger] Found AI-Names object: {name}");
-                CreateNpcRecord(child.gameObject);
+                int id = child.gameObject.GetInstanceID();
+                if (_seenAINames.Add(id))
+                    CreateNpcRecord(child.gameObject);
             }
-            WalkForAINames(child);
+
+            WalkForNpcMarkers(child);
+        }
+    }
+
+    private static void LogChildNames(Transform t, int depth)
+    {
+        if (depth > 3) return;
+        for (int i = 0; i < t.childCount && i < 10; i++)
+        {
+            var child = t.GetChild(i);
+            if (child == null) continue;
+            string prefix = new string(' ', depth * 2);
+            MelonLogger.Msg($"[GameEventLogger]   {prefix}{child.name}");
+            LogChildNames(child, depth + 1);
         }
     }
 
@@ -463,7 +548,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private FlSaveDataResult? TryReadFlSaveData(string npcName)
     {
-        if (_flSaveDataInstance == null)
+        if (_flSaveDataInstance == null && !_flSaveDataSearched)
         {
             _flSaveDataSearched = true;
             DiscoverFlSaveData();
@@ -528,26 +613,210 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         try
         {
-            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            if (!scene.IsValid()) return;
-
-            foreach (var go in scene.GetRootGameObjects())
+            // 1. Search all loaded scenes (FlSaveData may be in Game2, not active scene)
+            for (int si = 0; si < UnityEngine.SceneManagement.SceneManager.sceneCount; si++)
             {
-                if (go == null) continue;
-                _flSaveDataInstance = FindComponentByName(go.transform, "FlSaveData");
-                if (_flSaveDataInstance != null)
+                var s = UnityEngine.SceneManagement.SceneManager.GetSceneAt(si);
+                if (!s.IsValid() || !s.isLoaded) continue;
+                foreach (var go in s.GetRootGameObjects())
                 {
-                    _flSaveDataType = _flSaveDataInstance.GetType();
-                    MelonLogger.Msg($"[GameEventLogger] Found FlSaveData on: {go.name} ({_flSaveDataType.FullName})");
-                    return;
+                    if (go == null) continue;
+                    _flSaveDataInstance = FindComponentByName(go.transform, "FlSaveData");
+                    if (_flSaveDataInstance != null)
+                    {
+                        _flSaveDataType = _flSaveDataInstance.GetType();
+                        MelonLogger.Msg($"[GameEventLogger] Found FlSaveData on: {go.name} (scene={s.name})");
+                        return;
+                    }
                 }
             }
+
+            // 2. Search all loaded GameObjects via Resources
+            try
+            {
+                var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
+                foreach (var go in allObjects)
+                {
+                    if (go == null || go.scene.name == null) continue;
+                    _flSaveDataInstance = FindComponentByName(go.transform, "FlSaveData");
+                    if (_flSaveDataInstance != null)
+                    {
+                        _flSaveDataType = _flSaveDataInstance.GetType();
+                        MelonLogger.Msg($"[GameEventLogger] Found FlSaveData via Resources on: {go.name}");
+                        return;
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Assembly scanning (last resort — wrap per-assembly in try-catch)
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.IsDynamic) continue;
+                System.Type[] types;
+                try { types = asm.GetTypes(); }
+                catch { continue; }
+
+                foreach (var t in types)
+                {
+                    if (!t.Name.Equals("FlSaveData", StringComparison.Ordinal)) continue;
+                    MelonLogger.Msg($"[GameEventLogger] Found FlSaveData type in {asm.GetName().Name}: {t.FullName}");
+
+                    // Check for static Instance property/field (singleton pattern)
+                    var prop = t.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+                    if (prop != null)
+                    {
+                        _flSaveDataInstance = prop.GetValue(null, null);
+                        if (_flSaveDataInstance != null)
+                        {
+                            _flSaveDataType = t;
+                            MelonLogger.Msg($"[GameEventLogger] FlSaveData found via Instance property");
+                            return;
+                        }
+                    }
+
+                    var field = t.GetField("Instance", BindingFlags.Public | BindingFlags.Static);
+                    if (field != null)
+                    {
+                        _flSaveDataInstance = field.GetValue(null);
+                        if (_flSaveDataInstance != null)
+                        {
+                            _flSaveDataType = t;
+                            MelonLogger.Msg($"[GameEventLogger] FlSaveData found via Instance field");
+                            return;
+                        }
+                    }
+
+                    // Try non-generic FindObjectsOfType (doesn't require Component constraint)
+                    var nonGenericMethod = typeof(UnityEngine.Object)
+                        .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .FirstOrDefault(m => m.Name == "FindObjectsOfType"
+                                          && !m.IsGenericMethodDefinition
+                                          && m.GetParameters().Length == 1
+                                          && m.GetParameters()[0].ParameterType == typeof(System.Type));
+                    if (nonGenericMethod != null)
+                    {
+                        var results = nonGenericMethod.Invoke(null, new object[] { t }) as Array;
+                        if (results != null && results.Length > 0)
+                        {
+                            _flSaveDataInstance = results.GetValue(0);
+                            _flSaveDataType = t;
+                            MelonLogger.Msg($"[GameEventLogger] FlSaveData instance found via FindObjectsOfType(Type)");
+                            return;
+                        }
+                    }
+
+                    // Try creating a new instance (data may populate from asset bundle)
+                    try
+                    {
+                        var instance = Activator.CreateInstance(t, nonPublic: true);
+                        if (instance != null)
+                        {
+                            _flSaveDataInstance = instance;
+                            _flSaveDataType = t;
+                            MelonLogger.Msg($"[GameEventLogger] FlSaveData instance created via Activator");
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Msg($"[GameEventLogger] FlSaveData Activator.CreateInstance failed: {ex.Message}");
+                    }
+
+                    // Try Il2Cpp zero-arg constructor
+                    try
+                    {
+                        var ctor = t.GetConstructor(Type.EmptyTypes);
+                        if (ctor != null)
+                        {
+                            var instance = ctor.Invoke(null);
+                            if (instance != null)
+                            {
+                                _flSaveDataInstance = instance;
+                                _flSaveDataType = t;
+                                MelonLogger.Msg($"[GameEventLogger] FlSaveData instance created via default ctor");
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Msg($"[GameEventLogger] FlSaveData default ctor failed: {ex.Message}");
+                    }
+
+                    // Static field scan: search every type for a static FlSaveData field
+                    MelonLogger.Msg($"[GameEventLogger] Scanning all types for static FlSaveData fields...");
+                    foreach (var scanAsm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        if (scanAsm.IsDynamic) continue;
+                        System.Type[] scanTypes;
+                        try { scanTypes = scanAsm.GetTypes(); }
+                        catch { continue; }
+
+                        foreach (var scanType in scanTypes)
+                        {
+                            try
+                            {
+                                foreach (var fi in scanType.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+                                {
+                                    if (fi.FieldType != t) continue;
+                                    var val = fi.GetValue(null);
+                                    if (val != null)
+                                    {
+                                        _flSaveDataInstance = val;
+                                        _flSaveDataType = t;
+                                        MelonLogger.Msg($"[GameEventLogger] FlSaveData found in {scanType.FullName}.{fi.Name}");
+                                        return;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // Harmony hook: intercept constructor when game creates FlSaveData
+                    MelonLogger.Msg($"[GameEventLogger] Installing Harmony hook on FlSaveData constructor...");
+                    try
+                    {
+                        var ctors = t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        foreach (var ctor in ctors)
+                        {
+                            if (ctor.GetParameters().Length > 0) continue;
+                            _flSaveDataHarmony.Unpatch(ctor, HarmonyPatchType.Postfix, _flSaveDataHarmony.Id);
+                            _flSaveDataHarmony.Patch(ctor, postfix: new HarmonyMethod(typeof(GameEventLoggerMod)
+                                .GetMethod(nameof(FlSaveDataCtorPostfix), BindingFlags.NonPublic | BindingFlags.Static)));
+                            MelonLogger.Msg($"[GameEventLogger] Harmony hook installed on FlSaveData.ctor()");
+                            _flSaveDataSearched = false; // allow retry
+                            break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"[GameEventLogger] Harmony hook failed: {ex.Message}");
+                    }
+
+                    MelonLogger.Warning($"[GameEventLogger] FlSaveData: no instance exists at runtime. Game stores NPC data in level2 AssetBundle; using generated data.");
+                    break;
+                }
+            }
+
             MelonLogger.Warning("[GameEventLogger] FlSaveData not found in scene");
         }
         catch (Exception ex)
         {
             MelonLogger.Warning($"[GameEventLogger] FlSaveData discovery failed: {ex.Message}");
         }
+    }
+
+    private static void FlSaveDataCtorPostfix(object __instance)
+    {
+        if (__instance == null) return;
+        var mod = Melon<GameEventLoggerMod>.Instance;
+        if (mod == null) return;
+        if (mod._flSaveDataInstance != null) return;
+        mod._flSaveDataInstance = __instance;
+        mod._flSaveDataType = __instance.GetType();
+        MelonLogger.Msg($"[GameEventLogger] FlSaveData instance captured via Harmony hook");
     }
 
     private static object? FindComponentByName(Transform t, string typeName)
@@ -627,6 +896,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), _panicOverlay, ScaleMode.StretchToFill);
 
+        if (_panicStyle == null) return;
         float pulse = Mathf.PingPong(Time.unscaledTime * 4f, 1f);
         _panicStyle.normal.textColor = Color.Lerp(Color.red, Color.white, pulse);
 
