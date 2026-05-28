@@ -70,6 +70,7 @@ public static class NPCDataStore
     private static readonly List<NPCCharge> Charges = new();
     private static readonly List<ArrestRecord> Arrests = new();
     private static readonly List<NPCInfo> NpcRecords = new();
+    private static readonly Dictionary<string, int> OfficerReputation = new(StringComparer.OrdinalIgnoreCase);
     private static int _nextId;
     private static int _dataVersion;
 
@@ -85,6 +86,7 @@ public static class NPCDataStore
         List<NPCCharge> Charges,
         List<ArrestRecord> Arrests,
         List<NPCInfo> NpcRecords,
+        Dictionary<string, int> OfficerReputation,
         int NextId
     );
 
@@ -110,7 +112,7 @@ public static class NPCDataStore
         if (_dataSavePath == null) return;
         try
         {
-            var data = new DataSnapshot(Citations, Charges, Arrests, NpcRecords, _nextId);
+            var data = new DataSnapshot(Citations, Charges, Arrests, NpcRecords, OfficerReputation, _nextId);
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_dataSavePath, json);
         }
@@ -133,6 +135,10 @@ public static class NPCDataStore
             Arrests.AddRange(data.Arrests);
             NpcRecords.Clear();
             NpcRecords.AddRange(data.NpcRecords);
+            OfficerReputation.Clear();
+            if (data.OfficerReputation != null)
+                foreach (var kv in data.OfficerReputation)
+                    OfficerReputation[kv.Key] = kv.Value;
             _nextId = data.NextId;
         }
         catch { }
@@ -312,6 +318,32 @@ public static class NPCDataStore
             .Where(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.DetectedAt)
             .FirstOrDefault();
+
+    // ── Officer Reputation ──
+
+    public static int GetReputation(string officer)
+    {
+        if (string.IsNullOrWhiteSpace(officer)) return 100;
+        return OfficerReputation.TryGetValue(officer, out int rep) ? rep : 100;
+    }
+
+    public static void AddReputation(string officer, int delta)
+    {
+        if (string.IsNullOrWhiteSpace(officer)) return;
+        int current = GetReputation(officer);
+        OfficerReputation[officer] = Math.Clamp(current + delta, 0, 500);
+        SaveData();
+    }
+
+    public static string ReputationTier(string officer)
+    {
+        int rep = GetReputation(officer);
+        if (rep >= 300) return "ELITE";
+        if (rep >= 200) return "VETERAN";
+        if (rep >= 100) return "STANDARD";
+        if (rep >= 50)  return "ROOKIE";
+        return "PROBATION";
+    }
 
     private static readonly Dictionary<string, string> SubjectPhotos = new();
 

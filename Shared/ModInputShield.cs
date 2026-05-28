@@ -7,9 +7,15 @@ internal static class ModInputShield
 {
     private static readonly HashSet<KeyCode> AllowedKeys = new();
     private static bool _blocked;
+    private static string _lastSignature = "";
 
     internal static void SetBlocked(bool blocked, params KeyCode[] allowedKeys)
     {
+        string signature = blocked + ":" + string.Join(",", allowedKeys);
+        if (signature == _lastSignature)
+            return;
+
+        _lastSignature = signature;
         _blocked = blocked;
         AllowedKeys.Clear();
         foreach (var key in allowedKeys)
@@ -25,11 +31,11 @@ internal static class ModInputShield
     private static bool ShouldBlockAxis(string axisName)
     {
         if (!_blocked || string.IsNullOrWhiteSpace(axisName)) return false;
-        return axisName.Contains("mouse", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Contains("horizontal", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Contains("vertical", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Contains("fire", StringComparison.OrdinalIgnoreCase) ||
-               axisName.Contains("aim", StringComparison.OrdinalIgnoreCase);
+        return axisName.IndexOf("mouse", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               axisName.IndexOf("horizontal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               axisName.IndexOf("vertical", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               axisName.IndexOf("fire", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               axisName.IndexOf("aim", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     [HarmonyPatch(typeof(Input), nameof(Input.GetKey), new[] { typeof(KeyCode) })]

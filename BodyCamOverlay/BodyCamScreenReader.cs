@@ -10,6 +10,25 @@ internal sealed class BodyCamScreenReader
 {
     private readonly HashSet<string> _firstNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _lastNames = new(StringComparer.OrdinalIgnoreCase);
+    private const int ScreenReadTimeoutMs = 900;
+    private static readonly string ScreenReadScript =
+        "Add-Type -AssemblyName UIAutomationClient;" +
+        "Add-Type -AssemblyName UIAutomationTypes;" +
+        "Add-Type @' using System; using System.Runtime.InteropServices; public static class W{[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();}'@;" +
+        "$h=[W]::GetForegroundWindow();" +
+        "$root=[System.Windows.Automation.AutomationElement]::FromHandle($h);" +
+        "if($root -eq $null){$root=[System.Windows.Automation.AutomationElement]::FocusedElement};" +
+        "$cond=[System.Windows.Automation.Condition]::TrueCondition;" +
+        "$sb=New-Object System.Text.StringBuilder;" +
+        "$els=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$cond);" +
+        "$limit=[Math]::Min($els.Count,250);" +
+        "for($i=0;$i -lt $limit;$i++){" +
+        "$e=$els.Item($i);" +
+        "try{" +
+        "$n=$e.Current.Name; if($n){[void]$sb.AppendLine($n)};" +
+        "$vp=$e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); if($vp -and $vp.Current.Value){[void]$sb.AppendLine($vp.Current.Value)}" +
+        "}catch{}}" +
+        "$sb.ToString()";
 
     internal BodyCamScreenReader()
     {
@@ -46,23 +65,9 @@ internal sealed class BodyCamScreenReader
     {
         try
         {
-            string script =
-                "Add-Type -AssemblyName UIAutomationClient;" +
-                "Add-Type -AssemblyName UIAutomationTypes;" +
-                "$root=[System.Windows.Automation.AutomationElement]::RootElement;" +
-                "$cond=[System.Windows.Automation.Condition]::TrueCondition;" +
-                "$sb=New-Object System.Text.StringBuilder;" +
-                "$els=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$cond);" +
-                "foreach($e in $els){" +
-                "try{" +
-                "$n=$e.Current.Name; if($n){[void]$sb.AppendLine($n)};" +
-                "$vp=$e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); if($vp -and $vp.Current.Value){[void]$sb.AppendLine($vp.Current.Value)}" +
-                "}catch{}}" +
-                "$sb.ToString()";
-
             var psi = new ProcessStartInfo("powershell")
             {
-                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command " + Quote(script),
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command " + Quote(ScreenReadScript),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -72,11 +77,12 @@ internal sealed class BodyCamScreenReader
 
             using var process = Process.Start(psi);
             if (process == null) return "";
-            string output = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(1500))
+            if (!process.WaitForExit(ScreenReadTimeoutMs))
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
+                return "";
             }
+            string output = process.StandardOutput.ReadToEnd();
             return output;
         }
         catch
@@ -87,21 +93,37 @@ internal sealed class BodyCamScreenReader
 
     private DriverLicenseScan Parse(string raw)
     {
-        string first = FindField(raw, "DAC", "first", "firstname", "given");
-        string last = FindField(raw, "DCS", "last", "lastname", "surname");
-        string plate = FindField(raw, "PLATE", "plate", "licenseplate");
-        string status = FindField(raw, "STATUS", "licensestatus");
-        string weapon = FindField(raw, "WEAPON", "weaponlicense", "firearm", "firearms");
+        var lines = raw.Split(new[] { '\r', '\n', ';', '|' }, StringSplitOptions.RemoveEmptyEntries);
+        string first = FindField(lines, "DAC", "first", "firstname", "given");
+        string last = FindField(lines, "DCS", "last", "lastname", "surname");
+        string plate = FindField(lines, "PLATE", "plate", "licenseplate");
+        string status = FindField(lines, "STATUS", "licensestatus");
+        string weapon = FindField(lines, "WEAPON", "weaponlicense", "firearm", "firearms");
 
-        var tokens = raw.Split(new[] { ' ', '\r', '\n', '\t', ',', ';', '|', ':', '=' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(CleanToken)
-            .Where(t => t.Length > 1)
-            .ToList();
+        var tokens = raw.Split(new[] { ' ', '\r', '\n', '\t', ',', ';', '|', ':', '=' }, StringSplitOptions.RemoveEmptyEntries);
+
+        string firstToken = "";
+        string lastToken = "";
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(last))
+        {
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                string t = CleanToken(tokens[i]);
+                if (t.Length <= 1) continue;
+                if (string.IsNullOrWhiteSpace(first) && _firstNames.Contains(t))
+                    firstToken = t;
+                if (string.IsNullOrWhiteSpace(last) && _lastNames.Contains(t))
+                    lastToken = t;
+                if (!string.IsNullOrWhiteSpace(firstToken) && !string.IsNullOrWhiteSpace(lastToken))
+                    break;
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(first))
-            first = tokens.FirstOrDefault(t => _firstNames.Contains(t)) ?? "";
+            first = firstToken;
+
         if (string.IsNullOrWhiteSpace(last))
-            last = tokens.FirstOrDefault(t => _lastNames.Contains(t)) ?? "";
+            last = lastToken;
 
         if (string.IsNullOrWhiteSpace(status))
             status = GuessLicenseStatus(tokens);
@@ -115,40 +137,82 @@ internal sealed class BodyCamScreenReader
         return new DriverLicenseScan(DateTime.Now, raw, first, last, plate, status, hasWeapon);
     }
 
-    private static string GuessLicenseStatus(List<string> tokens)
+    private static string GuessLicenseStatus(string[] tokens)
     {
-        if (tokens.Any(t => t.Equals("Suspended", StringComparison.OrdinalIgnoreCase))) return "Suspended";
-        if (tokens.Any(t => t.Equals("Revoked", StringComparison.OrdinalIgnoreCase))) return "Revoked";
-        if (tokens.Any(t => t.Equals("Expired", StringComparison.OrdinalIgnoreCase))) return "Expired";
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            string t = CleanToken(tokens[i]);
+            if (t.Equals("Suspended", StringComparison.OrdinalIgnoreCase)) return "Suspended";
+            if (t.Equals("Revoked", StringComparison.OrdinalIgnoreCase)) return "Revoked";
+            if (t.Equals("Expired", StringComparison.OrdinalIgnoreCase)) return "Expired";
+        }
         return "Valid";
     }
 
-    private static string FindField(string raw, params string[] keys)
+    private static string FindField(string[] lines, params string[] keys)
     {
-        var lines = raw.Split(new[] { '\r', '\n', ';', '|' }, StringSplitOptions.RemoveEmptyEntries);
-        foreach (string line in lines)
+        for (int li = 0; li < lines.Length; li++)
         {
-            string trimmed = line.Trim();
-            foreach (string key in keys)
+            string trimmed = lines[li].Trim();
+            for (int ki = 0; ki < keys.Length; ki++)
             {
-                if (trimmed.StartsWith(key + ":", StringComparison.OrdinalIgnoreCase))
-                    return CleanValue(trimmed[(key.Length + 1)..]);
-                if (trimmed.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
-                    return CleanValue(trimmed[(key.Length + 1)..]);
-                if (trimmed.StartsWith(key, StringComparison.OrdinalIgnoreCase) && trimmed.Length > key.Length)
-                    return CleanValue(trimmed[key.Length..]);
+                string key = keys[ki];
+                int keyLen = key.Length;
+                if (trimmed.Length <= keyLen) continue;
+
+                if (char.ToUpperInvariant(trimmed[0]) == char.ToUpperInvariant(key[0]) &&
+                    trimmed.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    char after = trimmed[keyLen];
+                    if (after is ':' or '=')
+                        return CleanValue(trimmed[(keyLen + 1)..]);
+                    return CleanValue(trimmed[keyLen..]);
+                }
             }
         }
         return "";
     }
 
-    private static string CleanValue(string value) =>
-        new string(value.Trim().Where(c => char.IsLetterOrDigit(c) || c is ' ' or '-').ToArray()).Trim();
+    private static string CleanValue(string value)
+    {
+        ReadOnlySpan<char> span = value.Trim();
+        int count = 0;
+        for (int i = 0; i < span.Length; i++)
+        {
+            char c = span[i];
+            if (char.IsLetterOrDigit(c) || c is ' ' or '-')
+                count++;
+        }
+        char[] arr = new char[count];
+        int pos = 0;
+        for (int i = 0; i < span.Length; i++)
+        {
+            char c = span[i];
+            if (char.IsLetterOrDigit(c) || c is ' ' or '-')
+                arr[pos++] = c;
+        }
+        return new string(arr).Trim();
+    }
 
     private static string CleanToken(string value)
     {
-        string clean = new(value.Trim().Where(char.IsLetter).ToArray());
-        return clean.Length == 0 ? "" : char.ToUpperInvariant(clean[0]) + clean[1..].ToLowerInvariant();
+        ReadOnlySpan<char> span = value.Trim();
+        int count = 0;
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (char.IsLetter(span[i]))
+                count++;
+        }
+        if (count == 0) return "";
+        char[] arr = new char[count];
+        int pos = 0;
+        for (int i = 0; i < span.Length; i++)
+        {
+            char c = span[i];
+            if (char.IsLetter(c))
+                arr[pos++] = pos == 1 ? char.ToUpperInvariant(c) : char.ToLowerInvariant(c);
+        }
+        return new string(arr);
     }
 
     private static string Quote(string value) =>

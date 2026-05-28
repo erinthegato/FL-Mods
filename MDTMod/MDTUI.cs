@@ -49,6 +49,11 @@ public sealed class MDTUI
     private string _witnessStatement = "";
     private List<WitnessStatement> _arrestWitnesses = new();
 
+    private CourtMiniGame _courtGame = new();
+    private bool _courtGameActive;
+    private string _courtGameSubject = "";
+    private List<string> _courtGameChargeIds = new();
+
     private static readonly string[] RoleNames = { "LAW ENFORCEMENT", "FIRE RESCUE", "EMS" };
     private static readonly string[] TabNames = { "FILING", "MAP", "COURT", "RECORDS" };
     private static readonly string[] FilingModes = { "Arrest / Charges", "Citation" };
@@ -77,6 +82,9 @@ public sealed class MDTUI
 
     private Color _bgColor, _borderColor, _accentColor, _textColor;
     private float _roleTimer;
+    private float _gpsPlayerTimer;
+    private float _playerGpsX;
+    private float _playerGpsZ;
 
     private static Texture2D _texBg = null!;
     private static Texture2D _texBorder = null!;
@@ -300,13 +308,20 @@ public sealed class MDTUI
         _boldLabel.normal.textColor = _accentColor;
         GUI.Label(new Rect(0, 5, width, 22), "INCIDENT MAP:", _boldLabel);
         _labelStyle.normal.textColor = _textColor;
-        GUI.Label(new Rect(10, 32, width - 20, 20), "Local incident, BOLO, and bodycam evidence map. Multiplayer unit tracking is disabled.", _labelStyle);
+        GUI.Label(new Rect(10, 32, width - 20, 20), "Local incident, BOLO, bodycam evidence, and GPS position map. Multiplayer unit tracking is disabled.", _labelStyle);
 
         var map = GetMapTexture();
         if (map == null)
         {
             GUI.Label(new Rect(10, 62, width - 20, 22), "Missing map asset: Mods\\Assets\\Map Flashing lights CLEAN.PNG", _labelStyle);
             return;
+        }
+
+        _gpsPlayerTimer += Time.unscaledDeltaTime;
+        if (_gpsPlayerTimer >= 1f)
+        {
+            _gpsPlayerTimer = 0f;
+            UpdatePlayerGps();
         }
 
         float viewY = 62;
@@ -321,15 +336,53 @@ public sealed class MDTUI
         DrawMapMarker(8 + drawW * 0.78f, 8 + drawH * 0.13f, "BOLO", Color.yellow);
         DrawMapMarker(8 + drawW * 0.84f, 8 + drawH * 0.86f, "BEACH", Color.green);
 
-        var bookmarks = BodyCamEvidenceStore.LoadBookmarks();
-        int count = Math.Min(10, bookmarks.Count);
-        for (int i = 0; i < count; i++)
+        if (_playerGpsX != 0f || _playerGpsZ != 0f)
         {
-            var b = bookmarks[bookmarks.Count - 1 - i];
-            DrawMapMarker(8 + drawW * 0.50f, 8 + drawH * (0.45f + i * 0.02f), "EVD", new Color(1f, 0.45f, 0.15f));
+            FlashingLightsMap.GameToMapUV(_playerGpsX, _playerGpsZ, drawW, drawH, out float px, out float py);
+            DrawMapMarker(8 + px, 8 + py, "YOU", Color.green);
+        }
+
+        var bookmarks = BodyCamEvidenceStore.LoadBookmarks();
+        int count = Math.Min(15, bookmarks.Count);
+        int drawn = 0;
+        for (int i = bookmarks.Count - 1; i >= 0 && drawn < count; i--)
+        {
+            var b = bookmarks[i];
+            if (FlashingLightsMap.TryParseGps(b.Location, out float gx, out float gz))
+            {
+                FlashingLightsMap.GameToMapUV(gx, gz, drawW, drawH, out float mx, out float my);
+                DrawMapMarker(8 + mx, 8 + my, "EVD", new Color(1f, 0.45f, 0.15f));
+            }
+            drawn++;
         }
 
         GUI.EndScrollView();
+    }
+
+    private void UpdatePlayerGps()
+    {
+        try
+        {
+            if (_cachedPlayer == null || !_cachedPlayer.activeInHierarchy)
+                _cachedPlayer = GameObject.FindGameObjectWithTag("Player");
+            if (_cachedPlayer != null)
+            {
+                var p = _cachedPlayer.transform.position;
+                _playerGpsX = p.x;
+                _playerGpsZ = p.z;
+            }
+        }
+        catch { }
+    }
+
+    private void AutoPopulateLocation()
+    {
+        UpdatePlayerGps();
+        if (_playerGpsX != 0f || _playerGpsZ != 0f)
+        {
+            _locationZip = FlashingLightsMap.ResolveZipCode(_playerGpsX, _playerGpsZ);
+            _locationStreet = FlashingLightsMap.ResolveStreet(_playerGpsX, _playerGpsZ);
+        }
     }
 
     private Texture2D? GetMapTexture()
@@ -680,8 +733,7 @@ public sealed class MDTUI
                     }))
             {
                 _scrollPos = Vector2.zero;
-                _locationZip = "";
-                _locationStreet = "";
+                AutoPopulateLocation();
                 _arrestNature = "";
                 _arrestDOB = "";
                 _arrestLicense = "";
@@ -960,6 +1012,12 @@ public sealed class MDTUI
 
     private void RenderCourtTab(float width)
     {
+        if (_courtGameActive)
+        {
+            RenderCourtMiniGame(width);
+            return;
+        }
+
         var pending = NPCDataStore.GetPendingCharges();
         _boldLabel.normal.textColor = _accentColor;
         GUI.Label(new Rect(0, 5, width, 22), $"PENDING CHARGES: {pending.Count}", _boldLabel);
@@ -972,16 +1030,36 @@ public sealed class MDTUI
         else
         {
             float y = 35;
-            foreach (var p in pending)
+            var grouped = pending.GroupBy(c => c.SubjectName).ToList();
+            foreach (var group in grouped)
             {
-                string line = $"{p.SubjectName,-20} {p.Charge.Name,-40} [{p.Charge.Class}]  Filed: {p.FiledAt:MM/dd HH:mm}";
-                GUI.Label(new Rect(10, y, width - 20, 18), line, _labelStyle);
-                y += 20;
+                string chargeList = string.Join(", ", group.Select(c => c.Charge.Name));
+                GUI.Label(new Rect(10, y, width - 120, 18), $"{group.Key} — {chargeList}", _labelStyle);
+                if (GUI.Button(new Rect(width - 110, y, 100, 18), "TRY CASE",
+                        new GUIStyle(GUI.skin.button) { fontSize = 11, fontStyle = FontStyle.Bold,
+                            normal = { textColor = Color.white, background = HighlightTex(Color.cyan * 0.5f) },
+                            hover = { textColor = Color.white } }))
+                {
+                    var arrests = NPCDataStore.GetArrestsForSubject(group.Key);
+                    var arrest = arrests.Count > 0 ? arrests[^1] : null;
+                    _courtGameChargeIds = group.Select(c => c.Id).ToList();
+                    _courtGameSubject = group.Key;
+                    _courtGame = new CourtMiniGame();
+                    if (arrest != null)
+                        _courtGame.GenerateFromArrest(arrest);
+                    _courtGameActive = true;
+                }
+                y += 22;
             }
         }
 
-        float y2 = pending.Count == 0 ? 65 : 35 + pending.Count * 20 + 20;
+        float y2 = pending.Count == 0 ? 65 : 35 + pending.GroupBy(c => c.SubjectName).Count() * 22 + 20;
         var ruled = NPCDataStore.GetCharges().Where(c => c.Verdict != null).ToList();
+        float repY = y2;
+        _boldLabel.normal.textColor = _accentColor;
+        GUI.Label(new Rect(0, repY, width, 22), $"YOUR REPUTATION ({_officerName}): {NPCDataStore.GetReputation(_officerName)} [{NPCDataStore.ReputationTier(_officerName)}]", _boldLabel);
+        y2 += 28;
+
         GUI.Label(new Rect(0, y2, width, 22), "VERDICTS:", _boldLabel);
         y2 += 28;
 
@@ -1015,6 +1093,110 @@ public sealed class MDTUI
             GUI.Label(new Rect(10, y2 + 5, width, 18),
                 $"Auto-court runs every {MDTMod.Instance.CourtIntervalMinutesConfig} min (config.txt overrides).",
                 _recordsArrestLabel);
+        }
+    }
+
+    private void RenderCourtMiniGame(float width)
+    {
+        float y = 5;
+        _boldLabel.normal.textColor = _accentColor;
+        GUI.Label(new Rect(0, y, width, 22), $"COURT MINI-GAME — {_courtGameSubject}", _boldLabel);
+        y += 28;
+
+        _labelStyle.normal.textColor = _textColor;
+        GUI.Label(new Rect(0, y, width, 18),
+            $"Reputation: {NPCDataStore.GetReputation(_officerName)} [{NPCDataStore.ReputationTier(_officerName)}]  |  Score: {_courtGame.Score}/{_courtGame.Total}",
+            _labelStyle);
+        y += 28;
+
+        if (_courtGame.IsFinished)
+        {
+            var result = _courtGame.GetResult(_officerName);
+            _boldLabel.normal.textColor = result.ReputationDelta >= 0 ? Color.green : Color.red;
+            GUI.Label(new Rect(0, y, width, 22),
+                $"CASE RESULT: {result.Score}/{result.Total} correct ({result.Score * 100 / Math.Max(1, result.Total)}%) — Reputation {(result.ReputationDelta >= 0 ? "+" : "")}{result.ReputationDelta}",
+                _boldLabel);
+            y += 28;
+
+            _labelStyle.normal.textColor = _textColor;
+            GUI.Label(new Rect(10, y, width - 20, 18),
+                $"Verdict modifier: {result.VerdictModifier.ToUpperInvariant()}", _labelStyle);
+            y += 50;
+
+            if (GUI.Button(new Rect(10, y, 160, 28), "APPLY VERDICT",
+                    new GUIStyle(GUI.skin.button) { fontSize = 13, fontStyle = FontStyle.Bold,
+                        normal = { textColor = Color.white, background = HighlightTex(Color.green * 0.6f) },
+                        hover = { textColor = Color.white }, alignment = TextAnchor.MiddleCenter }))
+            {
+                _courtGame.ApplyVerdict(_officerName, _courtGameChargeIds);
+                _courtGameActive = false;
+                SetStatus($"Verdict applied for {_courtGameSubject}. Reputation: {NPCDataStore.GetReputation(_officerName)}");
+            }
+
+            if (GUI.Button(new Rect(190, y, 120, 28), "DISMISS",
+                    new GUIStyle(GUI.skin.button) { fontSize = 13,
+                        normal = { textColor = _textColor, background = HighlightTex(_accentColor * 0.4f) },
+                        hover = { textColor = Color.white }, alignment = TextAnchor.MiddleCenter }))
+            {
+                _courtGameActive = false;
+            }
+            return;
+        }
+
+        if (!_courtGame.HasQuestions)
+        {
+            _labelStyle.normal.textColor = _textColor;
+            GUI.Label(new Rect(10, y, width - 20, 20), "No evidence available for this case. Try again after filing an arrest with details.", _labelStyle);
+            y += 30;
+            if (GUI.Button(new Rect(10, y, 100, 24), "BACK",
+                    new GUIStyle(GUI.skin.button) { normal = { textColor = _textColor, background = HighlightTex(_accentColor * 0.4f) },
+                        hover = { textColor = Color.white } }))
+                _courtGameActive = false;
+            return;
+        }
+
+        var q = _courtGame.Current!;
+        _boldLabel.normal.textColor = _accentColor;
+        GUI.Label(new Rect(10, y, width - 20, 22), $"Question {_courtGame.CurrentIndex + 1} of {_courtGame.Total}", _boldLabel);
+        y += 24;
+
+        _labelStyle.normal.textColor = _textColor;
+        GUI.Label(new Rect(10, y, width - 20, 26), q.Prompt, _labelStyle);
+        y += 30;
+
+        if (_courtGame.IsAnswered)
+        {
+            bool correct = _courtGame.SelectedAnswer == q.CorrectIndex;
+            _boldLabel.normal.textColor = correct ? Color.green : Color.red;
+            GUI.Label(new Rect(10, y, width - 20, 22),
+                correct ? "CORRECT!" : $"WRONG. Correct answer: {q.Options[q.CorrectIndex]}", _boldLabel);
+            y += 22;
+
+            _labelStyle.normal.textColor = _textColor;
+            GUI.Label(new Rect(10, y, width - 20, 22), q.Explanation, _labelStyle);
+            y += 28;
+
+            if (GUI.Button(new Rect(10, y, 160, 26), _courtGame.CurrentIndex + 1 >= _courtGame.Total ? "VIEW RESULTS" : "NEXT QUESTION",
+                    new GUIStyle(GUI.skin.button) { fontSize = 13, fontStyle = FontStyle.Bold,
+                        normal = { textColor = Color.white, background = HighlightTex(_accentColor) },
+                        hover = { textColor = Color.white }, alignment = TextAnchor.MiddleCenter }))
+                _courtGame.NextQuestion();
+        }
+        else
+        {
+            for (int i = 0; i < q.Options.Length; i++)
+            {
+                var btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft,
+                    normal = { textColor = _textColor, background = HighlightTex(_accentColor * 0.3f) },
+                    hover = { textColor = Color.white } };
+                if (GUI.Button(new Rect(10, y, width - 20, 26), $"  {(char)('A' + i)}. {q.Options[i]}", btnStyle))
+                {
+                    _courtGame.Answer(i);
+                    if (_courtGame.IsFinished)
+                        SetStatus($"Game complete! Score: {_courtGame.Score}/{_courtGame.Total}");
+                }
+                y += 30;
+            }
         }
     }
 

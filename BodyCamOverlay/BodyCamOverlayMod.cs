@@ -23,7 +23,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
     internal const string KeyBindFile = "BodyCamOverlay.keybinds";
-    private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
+    private static readonly HashSet<string> WeaponNames = new(StringComparer.OrdinalIgnoreCase) { "Gun_AP58", "Wep_Pistol_01" };
 
     private GameObject? _cachedPlayer;
     private Transform? _cachedWeapon;
@@ -42,9 +42,19 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private KeyCode _bookmarkKey = KeyCode.B;
     private KeyCode _licenseScanKey = KeyCode.L;
     private string _signalPath = "";
-    private bool _isPlayingSignal;
+    private bool _signalWavExists;
     private RuntimeAudioPlayer? _audioPlayer;
     private BodyCamScreenReader? _screenReader;
+    private string _cameraLabel = "";
+    private string _agencyLabel = "";
+    private string _metaLabel = "";
+    private string _gpsLabel = "GPS UNKNOWN";
+    private string _resourceLabel = "";
+    private string _clockLabel = "";
+    private int _lastClockSecond = -1;
+    private int _lastResourceSecond = -1;
+    private float _nextGpsRefreshTime;
+    private float _nextPlayerCacheTime;
 
     private static GUIStyle? _topStyle;
     private static GUIStyle? _smallStyle;
@@ -52,12 +62,15 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private static Texture2D? _barTex;
     private static Texture2D? _redTex;
     private const string SignalVersion = "raspy-vibrato-v2";
+    private static readonly string ClockFormat = "yyyy-MM-dd HH:mm:ss";
 
     protected override void OnModKitInitialized()
     {
         _signalPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "AxonSignal.wav");
         LoadKeyBinds();
+        RefreshOverlayLabels();
         EnsureSignalWav(_signalPath);
+        _signalWavExists = File.Exists(_signalPath);
         _screenReader = new BodyCamScreenReader();
         _audioPlayer = new RuntimeAudioPlayer(
             debugLog: msg => { if (Config.DebugLogging) LogDebug(msg); },
@@ -96,18 +109,22 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
                 ActivateOverlay();
         }
 
-        PollEmergencyTrigger();
-        if (Input.GetKeyDown(_bookmarkKey))
-            AddBookmark("manual", "Manual bookmark");
-        if (_overlayActive && Config.EnableLicenseScanBridge && Input.GetKeyDown(_licenseScanKey))
-            TryScanDriverLicense();
-
         if (Config.TriggerOnWeaponDraw && PerformanceSettings.Current.BodycamWeaponPollingAllowed)
             PollWeaponDraw();
         else
             _weaponWasDrawn = false;
 
-        if (!_overlayActive) return;
+        if (!_overlayActive)
+        {
+            PollEmergencyTrigger();
+            return;
+        }
+
+        PollEmergencyTrigger();
+        if (Input.GetKeyDown(_bookmarkKey))
+            AddBookmark("manual", "Manual bookmark");
+        if (Config.EnableLicenseScanBridge && Input.GetKeyDown(_licenseScanKey))
+            TryScanDriverLicense();
 
         _idleTimer += Time.unscaledDeltaTime;
         if (Config.IdleAutoOffSeconds > 0 && _idleTimer >= Config.IdleAutoOffSeconds)
@@ -126,6 +143,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     {
         if (!Config.Enabled || !_overlayActive) return;
         EnsureStyles();
+        UpdateOverlayCachedText();
         DrawOverlay();
     }
 
@@ -179,6 +197,16 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         _signalTimer = Math.Max(10f, Config.SignalIntervalSeconds);
     }
 
+    protected override void OnConfigApplied(BodyCamConfig currentConfig)
+    {
+        RefreshOverlayLabels();
+    }
+
+    protected override void OnConfigReloaded(BodyCamConfig previous, BodyCamConfig current)
+    {
+        RefreshOverlayLabels();
+    }
+
     private void LoadKeyBinds()
     {
         _toggleKey = KeyBindStore.Load(KeyBindFile, "ToggleKey", _toggleKey);
@@ -190,10 +218,8 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private void PlaySignalAndResetTimer()
     {
         _signalTimer = Math.Max(10f, Config.SignalIntervalSeconds);
-        if (_isPlayingSignal || !File.Exists(_signalPath)) return;
-        _isPlayingSignal = true;
+        if (!_signalWavExists) return;
         _audioPlayer?.Play(_signalPath);
-        _isPlayingSignal = false;
     }
 
     private void PollWeaponDraw()
@@ -221,7 +247,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
             if (_cachedPlayer == null || !_cachedPlayer.activeInHierarchy)
                 _cachedPlayer = GameObject.FindGameObjectWithTag("Player");
 
-            if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy && IsWeaponName(_cachedWeapon.name))
+            if (_cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy && WeaponNames.Contains(_cachedWeapon.name))
                 return;
 
             _cachedWeapon = null;
@@ -255,7 +281,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
                 continue;
             }
 
-            if (weapon.gameObject.activeInHierarchy && IsWeaponName(weapon.name))
+            if (weapon.gameObject.activeInHierarchy && WeaponNames.Contains(weapon.name))
                 return weapon;
         }
 
@@ -279,7 +305,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private void CollectWeapons(Transform root)
     {
-        if (IsWeaponName(root.name))
+        if (WeaponNames.Contains(root.name))
         {
             _weaponCandidates.Add(root);
             return;
@@ -297,19 +323,11 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         {
             var child = t.GetChild(i);
             if (!child.gameObject.activeInHierarchy) continue;
-            if (IsWeaponName(child.name)) return child;
+            if (WeaponNames.Contains(child.name)) return child;
             var found = FindWeapon(child);
             if (found != null) return found;
         }
         return null;
-    }
-
-    private static bool IsWeaponName(string name)
-    {
-        foreach (var weaponName in WeaponNames)
-            if (name.Contains(weaponName, StringComparison.OrdinalIgnoreCase))
-                return true;
-        return false;
     }
 
     private void DrawOverlay()
@@ -322,26 +340,64 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         GUI.DrawTexture(new Rect(x, y, w, 2), _barTex!);
         GUI.DrawTexture(new Rect(x, y + h, w, 2), _barTex!);
 
-        GUI.Label(new Rect(x, y + 8, w - 52, 26), Config.CameraId.ToUpperInvariant(), _topStyle);
+        GUI.Label(new Rect(x, y + 8, w - 52, 26), _cameraLabel, _topStyle);
         GUI.DrawTexture(new Rect(x + w - 44, y + 13, 10, 10), _redTex!);
         GUI.Label(new Rect(x + w - 30, y + 6, 30, 24), "REC", _recStyle);
 
-        string clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        GUI.Label(new Rect(x, y + 38, w, 20), clock, _smallStyle);
-        GUI.Label(new Rect(x, y + 61, w, 20), Config.Agency.ToUpperInvariant(), _smallStyle);
-        string meta = $"{Config.OfficerName.ToUpperInvariant()} | {Config.UnitId.ToUpperInvariant()} | {Config.CameraMode.ToUpperInvariant()}";
-        GUI.Label(new Rect(x, y + 84, w, 20), meta, _smallStyle);
+        GUI.Label(new Rect(x, y + 38, w, 20), _clockLabel, _smallStyle);
+        GUI.Label(new Rect(x, y + 61, w, 20), _agencyLabel, _smallStyle);
+        GUI.Label(new Rect(x, y + 84, w, 20), _metaLabel, _smallStyle);
         if (Config.SimulateBatteryAndStorage)
-            GUI.Label(new Rect(x, y + 105, w, 20), $"BAT {SimBattery()}% | STORAGE {SimStorage()} GB", _smallStyle);
+            GUI.Label(new Rect(x, y + 105, w, 20), _resourceLabel, _smallStyle);
         if (Config.ShowGpsLocation)
-            GUI.Label(new Rect(x, y + 126, w, 20), $"GPS {GetLocationLabel()}", _smallStyle);
+            GUI.Label(new Rect(x, y + 126, w, 20), _gpsLabel, _smallStyle);
+    }
 
+    private void RefreshOverlayLabels()
+    {
+        _cameraLabel = Config.CameraId.ToUpperInvariant();
+        _agencyLabel = Config.Agency.ToUpperInvariant();
+        _metaLabel = $"{Config.OfficerName.ToUpperInvariant()} | {Config.UnitId.ToUpperInvariant()} | {Config.CameraMode.ToUpperInvariant()}";
+        _lastClockSecond = -1;
+        _lastResourceSecond = -1;
+        _nextGpsRefreshTime = 0f;
+    }
+
+    private void UpdateOverlayCachedText()
+    {
+        int nowSecond = (int)Time.realtimeSinceStartup;
+        if (nowSecond != _lastClockSecond)
+        {
+            _lastClockSecond = nowSecond;
+            _clockLabel = DateTime.Now.ToString(ClockFormat);
+        }
+
+        if (Config.SimulateBatteryAndStorage && nowSecond != _lastResourceSecond)
+        {
+            _lastResourceSecond = nowSecond;
+            _resourceLabel = $"BAT {SimBattery()}% | STORAGE {SimStorage()} GB";
+        }
+
+        if (Config.ShowGpsLocation && Time.unscaledTime >= _nextGpsRefreshTime)
+        {
+            _nextGpsRefreshTime = Time.unscaledTime + 0.5f;
+            _gpsLabel = "GPS " + GetLocationLabel();
+        }
     }
 
     private void AddBookmark(string eventType, string note)
     {
         try
         {
+            float gpsX = 0f, gpsZ = 0f;
+            var player = GetCachedPlayer();
+            if (player != null)
+            {
+                var p = player.transform.position;
+                gpsX = p.x;
+                gpsZ = p.z;
+            }
+
             BodyCamEvidenceStore.AddBookmark(new BodyCamBookmark(
                 DateTime.Now,
                 Config.UnitId,
@@ -349,7 +405,9 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
                 Config.CameraMode,
                 eventType,
                 note,
-                GetLocationLabel()));
+                GetLocationLabel(),
+                gpsX,
+                gpsZ));
             if (Config.DebugLogging)
                 LogDebug($"Bodycam bookmark: {eventType} - {note}");
         }
@@ -374,10 +432,23 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private string GetLocationLabel()
     {
-        var player = _cachedPlayer != null ? _cachedPlayer : GameObject.FindGameObjectWithTag("Player");
+        var player = GetCachedPlayer();
         if (player == null) return "UNKNOWN";
         var p = player.transform.position;
         return $"{p.x:0.0},{p.z:0.0}";
+    }
+
+    private GameObject? GetCachedPlayer()
+    {
+        if (_cachedPlayer != null && _cachedPlayer.activeInHierarchy)
+        {
+            if (Time.unscaledTime < _nextPlayerCacheTime)
+                return _cachedPlayer;
+        }
+
+        _cachedPlayer = GameObject.FindGameObjectWithTag("Player");
+        _nextPlayerCacheTime = Time.unscaledTime + 2f;
+        return _cachedPlayer;
     }
 
     private static int SimBattery() =>

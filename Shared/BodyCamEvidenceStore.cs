@@ -10,7 +10,9 @@ public sealed record BodyCamBookmark(
     string CameraMode,
     string EventType,
     string Note,
-    string Location
+    string Location,
+    float GpsX = 0f,
+    float GpsZ = 0f
 );
 
 public sealed record DriverLicenseScan(
