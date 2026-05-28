@@ -5,6 +5,9 @@ namespace FLModkitBindings;
 
 public sealed class FLModkitBindingsConfig
 {
+    [ModKitConfigDisplay("Auto Resolve Key Conflicts")]
+    public bool AutoResolveConflicts { get; set; } = false;
+
     [ModKitConfigDisplay("Asset Loader - Reload Assets")]
     public KeyCode AssetLoaderReloadKey { get; set; } = KeyCode.F7;
 
@@ -28,6 +31,12 @@ public sealed class FLModkitBindingsConfig
 
     [ModKitConfigDisplay("Bodycam - Emergency Trigger")]
     public KeyCode BodyCamEmergencyTriggerKey { get; set; } = KeyCode.Alpha2;
+
+    [ModKitConfigDisplay("Bodycam - Bookmark Event")]
+    public KeyCode BodyCamBookmarkKey { get; set; } = KeyCode.B;
+
+    [ModKitConfigDisplay("Bodycam - Scan Driver License")]
+    public KeyCode BodyCamLicenseScanKey { get; set; } = KeyCode.L;
 
     [ModKitConfigDisplay("Grammar Police - Push To Talk")]
     public KeyCode GrammarPolicePushToTalkKey { get; set; } = KeyCode.LeftControl;

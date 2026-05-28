@@ -10,6 +10,7 @@ public sealed class AudioPlayer : IDisposable
     private string? _currentUrl;
     private bool _disposed;
     private float _volume = 0.5f;
+    private DateTime _startedUtc;
 
     public bool IsPlaying => _process != null && !_process.HasExited;
     public bool IsPaused => false;
@@ -41,6 +42,7 @@ public sealed class AudioPlayer : IDisposable
             proc.Start();
             proc.Exited += OnProcessExited;
             _process = proc;
+            _startedUtc = DateTime.UtcNow;
 
             _currentUrl = streamUrl;
             PlaybackStarted?.Invoke();
@@ -77,6 +79,7 @@ public sealed class AudioPlayer : IDisposable
 
     private void OnProcessExited(object? sender, EventArgs e)
     {
+        bool earlyExit = (DateTime.UtcNow - _startedUtc).TotalSeconds < 3;
         _currentUrl = null;
         var proc = _process;
         if (proc != null)
@@ -85,6 +88,8 @@ public sealed class AudioPlayer : IDisposable
             proc.Dispose();
             _process = null;
         }
+        if (earlyExit)
+            Error?.Invoke("Playback helper exited before the stream could start. Check Windows Media Player availability or try Offline Mode.");
         PlaybackStopped?.Invoke();
     }
 

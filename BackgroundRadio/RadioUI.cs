@@ -269,6 +269,7 @@ public sealed class RadioUI
             {
                 var feed = feeds[_selectedIndex];
                 SetStatus($"Connecting to {feed.Name}...");
+                ActiveFeedName = feed.Name;
                 _ = PlayFeedAsync(service, player, feed.Id, feed.Name);
             }
             else if (Input.GetKeyDown(BackgroundRadioMod.Instance.StopKey))
@@ -295,8 +296,8 @@ public sealed class RadioUI
         string? url = await service.GetStreamUrlAsync(feedId);
         if (url != null)
         {
+            ActiveFeedName = feedName;
             bool ok = await player.PlayAsync(url);
-            if (ok) ActiveFeedName = feedName;
             SetStatus(ok ? $"Now playing: {feedName}" : $"Failed: {feedName}");
         }
         else

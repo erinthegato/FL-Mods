@@ -13,6 +13,11 @@
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
     <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
     <Compile Include="..\Shared\RuntimeAudioPlayer.cs" Link="RuntimeAudioPlayer.cs" />
+    <Compile Include="..\Shared\BodyCamEvidenceStore.cs" Link="BodyCamEvidenceStore.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Assets\AI_First_names.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\Ai_Last_Names.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
@@ -51,10 +56,16 @@
       <HintPath>$(Il2CppAssemblies)Il2Cppmscorlib.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="GrammarPoliceMod">
+      <HintPath>..\GrammarPoliceMod\bin\Release\net6.0-windows10.0.19041.0\GrammarPoliceMod.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
   <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(GameRoot)' != ''">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(OutDir)$(AssemblyName).deps.json" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(OutDir)FlashingLights.ModKit.Core.dll" DestinationFolder="$(GameRoot)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="Assets\AI_First_names.txt" DestinationFolder="$(GameRoot)\Mods\Assets" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="Assets\Ai_Last_Names.txt" DestinationFolder="$(GameRoot)\Mods\Assets" SkipUnchangedFiles="true" />
   </Target>
 </Project>

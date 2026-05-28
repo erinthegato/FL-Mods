@@ -130,8 +130,17 @@ public sealed class CommandEngine : IDisposable
         if (confidenceLevel == SpeechRecognitionConfidence.Medium && threshold > 0.65)
             return;
 
+        if (_commandCooldownTimer > 0)
+            return;
+
+        if (TryExecuteMacro(text))
+        {
+            _commandCooldownTimer = CommandCooldown;
+            return;
+        }
+
         var (code, message) = MapCommand(text);
-        if (code != null && _commandCooldownTimer <= 0)
+        if (code != null)
         {
             _commandCooldownTimer = CommandCooldown;
             var confFraction = confidenceLevel switch
@@ -142,6 +151,36 @@ public sealed class CommandEngine : IDisposable
             };
             ExecuteCommand(code, message, confFraction);
         }
+    }
+
+    public bool TryExecuteText(string text, double? confidence = null)
+    {
+        if (_commandCooldownTimer > 0)
+            return false;
+
+        if (TryExecuteMacro(text))
+        {
+            _commandCooldownTimer = CommandCooldown;
+            return true;
+        }
+
+        var (code, message) = MapCommand(text);
+        if (code == null) return false;
+        _commandCooldownTimer = CommandCooldown;
+        ExecuteCommand(code, message, confidence);
+        return true;
+    }
+
+    public bool TryExecuteMacro(string text)
+    {
+        if (!GrammarPoliceMod.Instance.MacroCommandsEnabled)
+            return false;
+
+        var macro = MacroCommandLoader.Match(text);
+        if (macro == null) return false;
+        GrammarPoliceMod.Instance.RunMacro(macro);
+        LastTransmission = $"Macro: {macro.Name}";
+        return true;
     }
 
     private static (string? code, string message) MapCommand(string voiceCommand)

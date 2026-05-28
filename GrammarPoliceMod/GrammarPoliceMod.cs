@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using FLMods.Shared;
 using FlashingLights.ModKit.Core;
+using HarmonyLib;
 using UnityEngine;
 
 namespace GrammarPoliceMod;
@@ -28,6 +30,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     internal bool VoiceRecognitionEnabled => Config.VoiceRecognitionEnabled && PerformanceSettings.Current.VoiceRecognitionAllowed;
     internal bool AutoDispatchEnabled => Config.AutoDispatchBackup;
     internal bool KeyEmulationEnabled => Config.KeyEmulationEnabled;
+    internal bool MacroCommandsEnabled => Config.MacroCommandsEnabled;
     internal DispatchAudio DispatchAudio => _dispatchAudio;
     internal KeyCode PushToTalkKey { get; private set; } = KeyCode.LeftControl;
     internal KeyCode RadioUIToggleKey { get; private set; } = KeyCode.F12;
@@ -58,24 +61,32 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     private CommandEngine _commandEngine = null!;
     private DispatchAudio _dispatchAudio = null!;
     private RadioUI _radioUI = null!;
+    private OfflineSpeechBridge? _offlineSpeech;
     private bool _uiVisible;
     private bool _pttShown;
     private bool _pttWasHeld;
     private bool _cursorWasLocked;
+    private HarmonyLib.Harmony? _inputHarmony;
 
     protected override void OnModKitInitialized()
     {
         Instance = this;
+        _inputHarmony = new HarmonyLib.Harmony("grammar-police.input-shield");
+        _inputHarmony.PatchAll();
         _commandEngine = new CommandEngine();
         _dispatchAudio = new DispatchAudio();
         _radioUI = new RadioUI(_commandEngine, _dispatchAudio);
+        RadioCodeLoader.Load();
+        MacroCommandLoader.Load();
         LoadKeyBinds();
         _radioUI.SetOverlayDuration(Config.OverlayDisplaySeconds);
+        _commandEngine.CommandRecognized += OnCommandRecognized;
 
         if (!CommandEngine.IsSpeechRuntimeAvailable(out string voiceReason))
         {
             _commandEngine.DisableVoice("Windows speech runtime dependency missing");
             LogWarning($"Speech recognition disabled; button-only mode active. {voiceReason}");
+            StartOfflineSpeechBackup();
         }
 
         if (_dispatchAudio.PanicAudioFiles.Count > 0)
@@ -97,9 +108,12 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     protected override void OnModKitDisabled()
     {
         SafeStopVoice();
+        _offlineSpeech?.Dispose();
+        _offlineSpeech = null;
         _uiVisible = false;
         _pttShown = false;
         _pttWasHeld = false;
+        ModInputShield.SetBlocked(false);
         RestoreCursor();
         LogInfo("Grammar Police disabled.");
     }
@@ -112,6 +126,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
             _keyBindReloadTimer = 1f;
             LoadKeyBinds();
         }
+        UpdateInputShield();
 
         if (Config.PanicEnabled)
         {
@@ -166,6 +181,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         _pttWasHeld = pttHeld;
 
         _radioUI.Update(Time.unscaledDeltaTime);
+        _offlineSpeech?.Update(Time.unscaledDeltaTime);
         _commandEngine.Update();
     }
 
@@ -244,6 +260,53 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         PanicTriggerKey = KeyBindStore.Load(KeyBindFile, nameof(PanicTriggerKey), PanicTriggerKey);
     }
 
+    private void OnCommandRecognized(CommandEventArgs args)
+    {
+        if (Config.MacroCommandsEnabled)
+            TryRunMacro(args.Code);
+    }
+
+    private void StartOfflineSpeechBackup()
+    {
+        if (!Config.OfflineSpeechBackupEnabled || _offlineSpeech != null)
+            return;
+
+        _offlineSpeech = new OfflineSpeechBridge();
+        _offlineSpeech.TextReceived += text =>
+        {
+            if (Config.MacroCommandsEnabled && _commandEngine.TryExecuteMacro(text))
+                return;
+            _commandEngine.TryExecuteText(text, 0.75);
+        };
+        _offlineSpeech.Start(Config.OfflineSpeechCommand);
+        LogInfo(_offlineSpeech.Status);
+    }
+
+    internal void TryRunMacro(string codeOrName)
+    {
+        var macro = MacroCommandLoader.CurrentMacros.FirstOrDefault(m =>
+            m.Name.Equals(codeOrName, StringComparison.OrdinalIgnoreCase));
+        if (macro != null)
+            RunMacro(macro);
+    }
+
+    internal void RunMacro(MacroCommand macro)
+    {
+        _ = Task.Run(async () =>
+        {
+            foreach (var step in macro.Steps)
+            {
+                if (step.DelayMs > 0)
+                    await Task.Delay(step.DelayMs);
+
+                if (step.Type.Equals("command", StringComparison.OrdinalIgnoreCase))
+                    _commandEngine.ExecuteCommand(step.Value, string.IsNullOrWhiteSpace(step.Message) ? step.Value : step.Message);
+                else if (step.Type.Equals("keySequence", StringComparison.OrdinalIgnoreCase))
+                    KeySimulator.PressSequence(step.Value);
+            }
+        });
+    }
+
     private void UpdateCursor()
     {
         if (_uiVisible)
@@ -256,6 +319,11 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         {
             RestoreCursor();
         }
+    }
+
+    private void UpdateInputShield()
+    {
+        ModInputShield.SetBlocked(_uiVisible, RadioUIToggleKey, PushToTalkKey, RadioNavigateUpKey, RadioNavigateDownKey, RadioSelectKey);
     }
 
     private void RestoreCursor()

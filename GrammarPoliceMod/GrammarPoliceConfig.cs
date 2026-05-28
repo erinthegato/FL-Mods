@@ -19,6 +19,8 @@ public sealed class GrammarPoliceConfig
     public double HotReloadIntervalSeconds { get; set; } = 1;
 
     public bool VoiceRecognitionEnabled { get; set; } = true;
+    public bool OfflineSpeechBackupEnabled { get; set; } = true;
+    public string OfflineSpeechCommand { get; set; } = "";
 
     [ModKitConfigDisplay("Confidence Threshold")]
     [ModKitConfigRange(0.1, 1.0, 0.05)]
@@ -35,6 +37,7 @@ public sealed class GrammarPoliceConfig
     public bool AutoDispatchBackup { get; set; } = true;
 
     public bool KeyEmulationEnabled { get; set; } = true;
+    public bool MacroCommandsEnabled { get; set; } = true;
 
     [ModKitConfigDisplay("10-1 Key Sequence (comma-separated, e.g. F,G)")]
     public string KeySequence_10_1 { get; set; } = "";

@@ -2,13 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using FLMods.Shared;
 using UnityEngine;
 
 namespace MDTMod;
 
 public sealed class MDTUI
 {
-    private enum Tab { Filing, Court, Records }
+    private enum Tab { Filing, Map, Court, Records }
     private enum MDTRole { Police, Fire, EMS }
 
     private Tab _activeTab = Tab.Filing;
@@ -34,6 +35,8 @@ public sealed class MDTUI
     private MDTRole _currentRole = MDTRole.Police;
     private GameObject? _cachedPlayer;
     private readonly Dictionary<string, Texture2D> _photoCache = new();
+    private Texture2D? _mapTexture;
+    private Vector2 _mapScroll;
 
     private List<USCharge> _pendingCharges = new();
     private bool _showArrestNarrative;
@@ -47,7 +50,7 @@ public sealed class MDTUI
     private List<WitnessStatement> _arrestWitnesses = new();
 
     private static readonly string[] RoleNames = { "LAW ENFORCEMENT", "FIRE RESCUE", "EMS" };
-    private static readonly string[] TabNames = { "FILING", "COURT", "RECORDS" };
+    private static readonly string[] TabNames = { "FILING", "MAP", "COURT", "RECORDS" };
     private static readonly string[] FilingModes = { "Arrest / Charges", "Citation" };
     private static readonly string[] RegistrationStatuses = { "Valid", "Expired", "Suspended", "Revoked" };
     private static readonly string[] WantedStatuses = { "Clear", "Wanted", "Missing" };
@@ -281,6 +284,7 @@ public sealed class MDTUI
         switch (_activeTab)
         {
             case Tab.Filing: RenderFilingTab(contentRect.width - 20); break;
+            case Tab.Map: RenderMapTab(contentRect.width - 20, contentRect.height - 20); break;
             case Tab.Court: RenderCourtTab(contentRect.width - 20); break;
             case Tab.Records: RenderRecordsTab(contentRect.width - 20); break;
         }
@@ -289,6 +293,72 @@ public sealed class MDTUI
         GUI.EndGroup();
 
         DrawStatus(screenRect);
+    }
+
+    private void RenderMapTab(float width, float height)
+    {
+        _boldLabel.normal.textColor = _accentColor;
+        GUI.Label(new Rect(0, 5, width, 22), "INCIDENT MAP:", _boldLabel);
+        _labelStyle.normal.textColor = _textColor;
+        GUI.Label(new Rect(10, 32, width - 20, 20), "Local incident, BOLO, and bodycam evidence map. Multiplayer unit tracking is disabled.", _labelStyle);
+
+        var map = GetMapTexture();
+        if (map == null)
+        {
+            GUI.Label(new Rect(10, 62, width - 20, 22), "Missing map asset: Mods\\Assets\\Map Flashing lights CLEAN.PNG", _labelStyle);
+            return;
+        }
+
+        float viewY = 62;
+        float viewH = Math.Max(320, height - viewY - 10);
+        float scale = Math.Min((width - 36) / map.width, 0.95f);
+        float drawW = map.width * scale;
+        float drawH = map.height * scale;
+        _mapScroll = GUI.BeginScrollView(new Rect(0, viewY, width, viewH), _mapScroll, new Rect(0, 0, drawW + 24, drawH + 24));
+        GUI.DrawTexture(new Rect(8, 8, drawW, drawH), map, ScaleMode.ScaleToFit);
+
+        DrawMapMarker(8 + drawW * 0.25f, 8 + drawH * 0.56f, "CITY", Color.cyan);
+        DrawMapMarker(8 + drawW * 0.78f, 8 + drawH * 0.13f, "BOLO", Color.yellow);
+        DrawMapMarker(8 + drawW * 0.84f, 8 + drawH * 0.86f, "BEACH", Color.green);
+
+        var bookmarks = BodyCamEvidenceStore.LoadBookmarks();
+        int count = Math.Min(10, bookmarks.Count);
+        for (int i = 0; i < count; i++)
+        {
+            var b = bookmarks[bookmarks.Count - 1 - i];
+            DrawMapMarker(8 + drawW * 0.50f, 8 + drawH * (0.45f + i * 0.02f), "EVD", new Color(1f, 0.45f, 0.15f));
+        }
+
+        GUI.EndScrollView();
+    }
+
+    private Texture2D? GetMapTexture()
+    {
+        if (_mapTexture != null) return _mapTexture;
+        try
+        {
+            string path = Path.Combine(Path.GetDirectoryName(typeof(MDTUI).Assembly.Location) ?? ".", "Assets", "Map Flashing lights CLEAN.PNG");
+            if (!File.Exists(path)) return null;
+            var tex = new Texture2D(2, 2);
+            tex.hideFlags = HideFlags.DontSave;
+            if (tex.LoadImage(File.ReadAllBytes(path)))
+            {
+                _mapTexture = tex;
+                return tex;
+            }
+            UnityEngine.Object.Destroy(tex);
+        }
+        catch { }
+        return null;
+    }
+
+    private void DrawMapMarker(float x, float y, string label, Color color)
+    {
+        Color prev = GUI.color;
+        GUI.color = color;
+        GUI.DrawTexture(new Rect(x - 5, y - 5, 10, 10), _texHighlight);
+        GUI.color = prev;
+        GUI.Label(new Rect(x + 7, y - 9, 80, 18), label, _catLabel);
     }
 
     private void DetectRole()
@@ -1170,7 +1240,15 @@ public sealed class MDTUI
         _recordWeaponLicense = GUI.Toggle(new Rect(275, y, 180, 22), _recordWeaponLicense, "Weapon License");
         y += 34;
 
-        if (GUI.Button(new Rect(10, y, 150, 28), "SAVE RECORD",
+        if (GUI.Button(new Rect(10, y, 150, 28), "IMPORT DL SCAN"))
+        {
+            if (TryImportLatestLicenseScan())
+                SetStatus("Driver license scan imported.");
+            else
+                SetStatus("No bodycam driver license scan found.");
+        }
+
+        if (GUI.Button(new Rect(170, y, 150, 28), "SAVE RECORD",
                 new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, normal = { textColor = Color.white, background = HighlightTex(Color.green * 0.6f) }, hover = { textColor = Color.white } }))
         {
             string fullName = BuildName(_recordFirstName, _recordLastName);
@@ -1201,6 +1279,24 @@ public sealed class MDTUI
         }
 
         return y + 42;
+    }
+
+    private bool TryImportLatestLicenseScan()
+    {
+        var scan = BodyCamEvidenceStore.LoadLatestLicenseScan();
+        if (scan == null) return false;
+
+        if (!string.IsNullOrWhiteSpace(scan.FirstName))
+            _recordFirstName = scan.FirstName;
+        if (!string.IsNullOrWhiteSpace(scan.LastName))
+            _recordLastName = scan.LastName;
+        if (!string.IsNullOrWhiteSpace(scan.LicensePlate))
+            _recordLicensePlate = FormatPlate(scan.LicensePlate);
+        if (!string.IsNullOrWhiteSpace(scan.LicenseStatus))
+            _recordLicenseStatus = LicenseStatuses.FirstOrDefault(s =>
+                s.Equals(scan.LicenseStatus, StringComparison.OrdinalIgnoreCase)) ?? "Valid";
+        _recordWeaponLicense = scan.WeaponLicense;
+        return true;
     }
 
     private void SeedNewRecordForm()

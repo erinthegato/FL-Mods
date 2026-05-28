@@ -7,6 +7,10 @@ public sealed class BodyCamConfig
 {
     public bool Enabled { get; set; } = true;
     public bool TriggerOnWeaponDraw { get; set; } = true;
+    public bool TriggerOnPanic { get; set; } = true;
+    public bool EnableLicenseScanBridge { get; set; } = true;
+    public bool ShowGpsLocation { get; set; } = true;
+    public bool SimulateBatteryAndStorage { get; set; } = true;
     public bool DebugLogging { get; set; } = false;
 
     [ModKitConfigDisplay("Emergency Trigger Press Count")]
@@ -29,9 +33,14 @@ public sealed class BodyCamConfig
     [ModKitConfigRange(5, 60, 1)]
     public float WeaponCacheRefreshSeconds { get; set; } = 20f;
 
+    [ModKitConfigDisplay("Idle Auto-Off Seconds")]
+    [ModKitConfigRange(0, 900, 15)]
+    public float IdleAutoOffSeconds { get; set; } = 180f;
+
     public float Volume { get; set; } = 1f;
     public string Agency { get; set; } = "FLASHING LIGHTS POLICE";
     public string OfficerName { get; set; } = "OFFICER";
     public string UnitId { get; set; } = "UNIT 001";
     public string CameraId { get; set; } = "AXON BODY 4";
+    public string CameraMode { get; set; } = "CHEST";
 }

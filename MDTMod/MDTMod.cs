@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using FLMods.Shared;
 using FlashingLights.ModKit.Core;
 using HarmonyLib;
 using MelonLoader;
@@ -85,6 +86,7 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     {
         _mdtVisible = false;
         InputsBlocked = false;
+        ModInputShield.SetBlocked(false);
         RestoreCursor();
         _mdtUI.Cleanup();
         NPCDataStore.SavePhotos();
@@ -99,6 +101,7 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
             _keyBindReloadTimer = 1f;
             LoadKeyBinds();
         }
+        ModInputShield.SetBlocked(_mdtVisible, ToggleKey);
 
         HandleMDTToggle();
         UpdateCourtTimer();

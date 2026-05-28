@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
+using FLMods.Shared;
 using FlashingLights.ModKit.Core;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -58,6 +60,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private const float SamePositionTolerance = 1.5f;
     internal KeyCode ToggleKey { get; private set; } = KeyCode.F9;
     internal KeyCode SendKey { get; private set; } = KeyCode.Return;
+    private HarmonyLib.Harmony? _inputHarmony;
 
     private readonly Dictionary<string, NpcIdentity> _npcIdentityCache = new();
 
@@ -99,6 +102,8 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     protected override void OnModKitInitialized()
     {
         Instance = this;
+        _inputHarmony = new HarmonyLib.Harmony("npc-ai.input-shield");
+        _inputHarmony.PatchAll();
         _chat = new ChatService();
         _ui = new NPCInteractionUI();
         LoadKeyBinds();
@@ -112,6 +117,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         _uiVisible = false;
         _cts?.Cancel();
         _chat.StopTts();
+        ModInputShield.SetBlocked(false);
         RestoreCursor();
         LogInfo("NPC AI disabled.");
     }
@@ -125,6 +131,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
             _keyBindReloadTimer = 1f;
             LoadKeyBinds();
         }
+        UpdateInputShield();
 
         if (!_isWaiting && Input.GetKeyDown(ToggleKey))
         {
@@ -549,5 +556,10 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
+    }
+
+    private void UpdateInputShield()
+    {
+        ModInputShield.SetBlocked(_uiVisible, ToggleKey, SendKey);
     }
 }

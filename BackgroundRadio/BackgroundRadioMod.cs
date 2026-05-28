@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Net.NetworkInformation;
 using System.Threading.Tasks;
+using FLMods.Shared;
 using FlashingLights.ModKit.Core;
+using HarmonyLib;
 using UnityEngine;
 
 namespace BackgroundRadio;
@@ -48,10 +50,13 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
     private OfflineScannerPlayer _offlinePlayer = null!;
     private bool _prevOfflineMode;
     private string _offlineDir = null!;
+    private HarmonyLib.Harmony? _inputHarmony;
 
     protected override void OnModKitInitialized()
     {
         Instance = this;
+        _inputHarmony = new HarmonyLib.Harmony("background-radio.input-shield");
+        _inputHarmony.PatchAll();
 
         _broadcastify = new BroadcastifyService();
         _audioPlayer = new AudioPlayer();
@@ -70,6 +75,11 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         {
             _currentStation = _radioUI.ActiveFeedName;
             DebugLog($"Playback started: {_currentStation}");
+        };
+        _audioPlayer.Error += message =>
+        {
+            LogWarning(message);
+            _radioUI.SetStatus(message);
         };
         _audioPlayer.PlaybackStopped += () =>
         {
@@ -142,6 +152,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         _offlinePlayer.Stop();
         _audioPlayer.Stop();
         _uiVisible = false;
+        ModInputShield.SetBlocked(false);
         RestoreCursor();
         LogInfo("Background Radio disabled.");
     }
@@ -163,6 +174,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             _keyBindReloadTimer = 1f;
             LoadKeyBinds();
         }
+        UpdateInputShield();
 
         bool radioAllowed = PerformanceSettings.Current.RadioStreamingAllowed;
         if (!radioAllowed)
@@ -285,6 +297,9 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
 
     protected override void OnModKitGui()
     {
+        if (Config.ShowNowPlayingOverlay)
+            DrawNowPlayingOverlay();
+
         if (!_uiVisible) return;
 
         if (_noInternet)
@@ -308,6 +323,23 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         _radioUI.Draw(rect, _broadcastify, _audioPlayer, Config, _isLoading, _currentStation, _offlinePlayer);
     }
 
+    private void DrawNowPlayingOverlay()
+    {
+        string? text = null;
+        if (Config.OfflineMode && _offlinePlayer.IsPlaying)
+            text = _offlinePlayer.CurrentFileName;
+        else if (_audioPlayer.IsPlaying)
+            text = _currentStation;
+
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        float w = 360f, h = 44f;
+        var rect = new Rect(18, Screen.height - h - 18, w, h);
+        GUI.Box(rect, "");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 5, w - 20, 16), "BACKGROUND RADIO");
+        GUI.Label(new Rect(rect.x + 10, rect.y + 22, w - 20, 18), text);
+    }
+
     private void UpdateCursor()
     {
         if (_uiVisible)
@@ -321,6 +353,11 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         {
             RestoreCursor();
         }
+    }
+
+    private void UpdateInputShield()
+    {
+        ModInputShield.SetBlocked(_uiVisible, ToggleKey, NavigateUpKey, NavigateDownKey, SelectKey, StopKey);
     }
 
     private void RestoreCursor()

@@ -16,6 +16,7 @@ public sealed class BroadcastifyService
     private static readonly List<Feed> _emptyFeeds = new();
     private DateTime _cacheTime;
     private const float CacheDuration = 120f;
+    public string LastError { get; private set; } = "";
 
     private static readonly Regex _rowRx = new(@"<tr>(.*?)</tr>", RegexOptions.Compiled | RegexOptions.Singleline);
     private static readonly Regex _linkRx = new(@"href=""/listen/feed/(\d+)"">([^<]+)", RegexOptions.Compiled);
@@ -74,8 +75,9 @@ public sealed class BroadcastifyService
             _cacheTime = DateTime.UtcNow;
             return feeds;
         }
-        catch
+        catch (Exception ex)
         {
+            LastError = ex.Message;
             return _cachedFeeds ?? _emptyFeeds;
         }
     }
@@ -98,10 +100,12 @@ public sealed class BroadcastifyService
             if (relayMatch.Success)
                 return relayMatch.Groups[1].Value.Replace("\\/", "/");
 
+            LastError = relayMatch.Success ? "" : "Relay URL not found; using direct Broadcastify CDN URL.";
             return fallback;
         }
-        catch
+        catch (Exception ex)
         {
+            LastError = $"Stream page failed; using direct Broadcastify CDN URL. {ex.Message}";
             return fallback;
         }
     }

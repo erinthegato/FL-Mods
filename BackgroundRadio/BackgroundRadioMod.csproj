@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
     <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
+    <Compile Include="..\Shared\ModInputShield.cs" Link="ModInputShield.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">

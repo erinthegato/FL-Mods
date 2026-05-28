@@ -11,6 +11,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
+    <Compile Include="..\Shared\BodyCamEvidenceStore.cs" Link="BodyCamEvidenceStore.cs" />
+    <Compile Include="..\Shared\ModInputShield.cs" Link="ModInputShield.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MDTShared\MDTShared.csproj">
@@ -67,10 +69,12 @@
   </ItemGroup>
   <Target Name="CopyConfig" AfterTargets="Build">
     <Copy SourceFiles="config.txt" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('config.txt')" />
+    <Copy SourceFiles="Assets\Map Flashing lights CLEAN.PNG" DestinationFolder="$(OutDir)Assets" SkipUnchangedFiles="true" Condition="Exists('Assets\Map Flashing lights CLEAN.PNG')" />
   </Target>
   <Target Name="DeployToMods" AfterTargets="Build">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(OutDir)FlashingLights.ModKit.Core.dll" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" />
     <Copy SourceFiles="config.txt" DestinationFolder="$(GameRoot)Mods" SkipUnchangedFiles="true" Condition="Exists('config.txt')" />
+    <Copy SourceFiles="Assets\Map Flashing lights CLEAN.PNG" DestinationFolder="$(GameRoot)Mods\Assets" SkipUnchangedFiles="true" Condition="Exists('Assets\Map Flashing lights CLEAN.PNG')" />
   </Target>
 </Project>

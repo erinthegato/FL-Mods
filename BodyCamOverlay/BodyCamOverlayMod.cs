@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Reflection;
+using FLMods.Shared;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
@@ -34,27 +35,34 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private float _signalTimer;
     private float _emergencyTriggerTimer;
     private float _keyBindReloadTimer;
+    private float _idleTimer;
     private int _emergencyTriggerPresses;
     private KeyCode _toggleKey = KeyCode.F8;
     private KeyCode _emergencyTriggerKey = KeyCode.Alpha2;
+    private KeyCode _bookmarkKey = KeyCode.B;
+    private KeyCode _licenseScanKey = KeyCode.L;
     private string _signalPath = "";
     private bool _isPlayingSignal;
     private RuntimeAudioPlayer? _audioPlayer;
+    private BodyCamScreenReader? _screenReader;
 
     private static GUIStyle? _topStyle;
     private static GUIStyle? _smallStyle;
     private static GUIStyle? _recStyle;
     private static Texture2D? _barTex;
     private static Texture2D? _redTex;
+    private const string SignalVersion = "raspy-vibrato-v2";
 
     protected override void OnModKitInitialized()
     {
         _signalPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "AxonSignal.wav");
         LoadKeyBinds();
         EnsureSignalWav(_signalPath);
+        _screenReader = new BodyCamScreenReader();
         _audioPlayer = new RuntimeAudioPlayer(
             debugLog: msg => { if (Config.DebugLogging) LogDebug(msg); },
             warningLog: msg => MelonLogger.Warning($"[BodyCamOverlay] {msg}"));
+        GrammarPoliceMod.GrammarPoliceMod.PanicTriggered += OnPanicTriggered;
     }
 
     protected override void OnModKitDisabled()
@@ -66,6 +74,8 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         _weaponCandidates.Clear();
         _audioPlayer?.Dispose();
         _audioPlayer = null;
+        _screenReader = null;
+        GrammarPoliceMod.GrammarPoliceMod.PanicTriggered -= OnPanicTriggered;
     }
 
     protected override void OnModKitUpdate()
@@ -87,6 +97,10 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         }
 
         PollEmergencyTrigger();
+        if (Input.GetKeyDown(_bookmarkKey))
+            AddBookmark("manual", "Manual bookmark");
+        if (_overlayActive && Config.EnableLicenseScanBridge && Input.GetKeyDown(_licenseScanKey))
+            TryScanDriverLicense();
 
         if (Config.TriggerOnWeaponDraw && PerformanceSettings.Current.BodycamWeaponPollingAllowed)
             PollWeaponDraw();
@@ -94,6 +108,14 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
             _weaponWasDrawn = false;
 
         if (!_overlayActive) return;
+
+        _idleTimer += Time.unscaledDeltaTime;
+        if (Config.IdleAutoOffSeconds > 0 && _idleTimer >= Config.IdleAutoOffSeconds)
+        {
+            AddBookmark("idle-stop", "Auto-deactivated after idle timer");
+            DeactivateOverlay();
+            return;
+        }
 
         _signalTimer -= Time.unscaledDeltaTime;
         if (_signalTimer <= 0f)
@@ -110,7 +132,18 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private void ActivateOverlay()
     {
         _overlayActive = true;
+        _idleTimer = 0f;
+        AddBookmark("activation", "Bodycam activated");
         PlaySignalAndResetTimer();
+    }
+
+    private void OnPanicTriggered()
+    {
+        if (!Config.TriggerOnPanic) return;
+        if (!_overlayActive)
+            ActivateOverlay();
+        else
+            AddBookmark("panic", "Panic button event");
     }
 
     private void PollEmergencyTrigger()
@@ -136,6 +169,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
                 ActivateOverlay();
             else
                 PlaySignalAndResetTimer();
+            AddBookmark("emergency-key", "Emergency trigger key sequence");
         }
     }
 
@@ -149,6 +183,8 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     {
         _toggleKey = KeyBindStore.Load(KeyBindFile, "ToggleKey", _toggleKey);
         _emergencyTriggerKey = KeyBindStore.Load(KeyBindFile, "EmergencyTriggerKey", _emergencyTriggerKey);
+        _bookmarkKey = KeyBindStore.Load(KeyBindFile, "BookmarkKey", _bookmarkKey);
+        _licenseScanKey = KeyBindStore.Load(KeyBindFile, "LicenseScanKey", _licenseScanKey);
     }
 
     private void PlaySignalAndResetTimer()
@@ -171,7 +207,10 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
         bool drawn = _cachedWeapon != null && _cachedWeapon.gameObject.activeInHierarchy;
         if (drawn && !_weaponWasDrawn && !_overlayActive)
+        {
             ActivateOverlay();
+            AddBookmark("weapon-draw", "Weapon draw detected");
+        }
         _weaponWasDrawn = drawn;
     }
 
@@ -276,7 +315,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private void DrawOverlay()
     {
         float w = 390f;
-        float h = 118f;
+        float h = Config.ShowGpsLocation || Config.SimulateBatteryAndStorage ? 154f : 118f;
         float x = Screen.width - w - 24f;
         float y = 24f;
 
@@ -290,9 +329,62 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         string clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         GUI.Label(new Rect(x, y + 38, w, 20), clock, _smallStyle);
         GUI.Label(new Rect(x, y + 61, w, 20), Config.Agency.ToUpperInvariant(), _smallStyle);
-        GUI.Label(new Rect(x, y + 84, w, 20), $"{Config.OfficerName.ToUpperInvariant()}  |  {Config.UnitId.ToUpperInvariant()}", _smallStyle);
+        string meta = $"{Config.OfficerName.ToUpperInvariant()} | {Config.UnitId.ToUpperInvariant()} | {Config.CameraMode.ToUpperInvariant()}";
+        GUI.Label(new Rect(x, y + 84, w, 20), meta, _smallStyle);
+        if (Config.SimulateBatteryAndStorage)
+            GUI.Label(new Rect(x, y + 105, w, 20), $"BAT {SimBattery()}% | STORAGE {SimStorage()} GB", _smallStyle);
+        if (Config.ShowGpsLocation)
+            GUI.Label(new Rect(x, y + 126, w, 20), $"GPS {GetLocationLabel()}", _smallStyle);
 
     }
+
+    private void AddBookmark(string eventType, string note)
+    {
+        try
+        {
+            BodyCamEvidenceStore.AddBookmark(new BodyCamBookmark(
+                DateTime.Now,
+                Config.UnitId,
+                Config.CameraId,
+                Config.CameraMode,
+                eventType,
+                note,
+                GetLocationLabel()));
+            if (Config.DebugLogging)
+                LogDebug($"Bodycam bookmark: {eventType} - {note}");
+        }
+        catch { }
+    }
+
+    private void TryScanDriverLicense()
+    {
+        if (!_overlayActive)
+            return;
+
+        var scan = _screenReader?.Scan();
+        if (scan == null || string.IsNullOrWhiteSpace(scan.RawText))
+        {
+            AddBookmark("license-scan-empty", "No readable screen text found while bodycam was active");
+            return;
+        }
+
+        BodyCamEvidenceStore.SaveLicenseScan(scan);
+        AddBookmark("license-scan", $"Scanned license for {scan.FirstName} {scan.LastName}".Trim());
+    }
+
+    private string GetLocationLabel()
+    {
+        var player = _cachedPlayer != null ? _cachedPlayer : GameObject.FindGameObjectWithTag("Player");
+        if (player == null) return "UNKNOWN";
+        var p = player.transform.position;
+        return $"{p.x:0.0},{p.z:0.0}";
+    }
+
+    private static int SimBattery() =>
+        Math.Max(5, 100 - (int)(Time.realtimeSinceStartup / 180f));
+
+    private static int SimStorage() =>
+        Math.Max(1, 64 - (int)(Time.realtimeSinceStartup / 300f));
 
     private static void EnsureStyles()
     {
@@ -333,10 +425,15 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private static void EnsureSignalWav(string path)
     {
-        if (File.Exists(path)) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+            string versionPath = path + ".version";
+            if (File.Exists(path) &&
+                File.Exists(versionPath) &&
+                File.ReadAllText(versionPath).Trim().Equals(SignalVersion, StringComparison.Ordinal))
+                return;
+
             using var stream = File.Create(path);
             using var writer = new BinaryWriter(stream);
             const int sampleRate = 44100;
@@ -357,6 +454,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
             writer.Write(dataBytes);
             foreach (short sample in samples)
                 writer.Write(sample);
+            File.WriteAllText(versionPath, SignalVersion);
         }
         catch (Exception ex)
         {
@@ -367,22 +465,28 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private static short[] BuildSignalSamples(int sampleRate)
     {
         var samples = new List<short>();
-        AddTone(samples, sampleRate, 880, 0.11);
-        AddSilence(samples, sampleRate, 0.055);
-        AddTone(samples, sampleRate, 1175, 0.11);
-        AddSilence(samples, sampleRate, 0.04);
-        AddTone(samples, sampleRate, 880, 0.08);
+        AddRaspyTone(samples, sampleRate, 820, 0.13, 6.5, 18);
+        AddSilence(samples, sampleRate, 0.045);
+        AddRaspyTone(samples, sampleRate, 1120, 0.12, 7.5, 26);
+        AddSilence(samples, sampleRate, 0.035);
+        AddRaspyTone(samples, sampleRate, 760, 0.10, 8.5, 22);
         return samples.ToArray();
     }
 
-    private static void AddTone(List<short> samples, int sampleRate, double frequency, double seconds)
+    private static void AddRaspyTone(List<short> samples, int sampleRate, double frequency, double seconds, double vibratoHz, double vibratoDepth)
     {
         int count = (int)(sampleRate * seconds);
         for (int i = 0; i < count; i++)
         {
             double t = i / (double)sampleRate;
             double envelope = Math.Min(1.0, Math.Min(i / 300.0, (count - i) / 300.0));
-            double value = Math.Sin(2 * Math.PI * frequency * t) * 0.32 * envelope;
+            double wobble = Math.Sin(2 * Math.PI * vibratoHz * t) * vibratoDepth;
+            double f = frequency + wobble;
+            double fundamental = Math.Sin(2 * Math.PI * f * t);
+            double bite = Math.Sin(2 * Math.PI * f * 2.02 * t) * 0.34;
+            double grit = Math.Sign(Math.Sin(2 * Math.PI * f * 0.51 * t)) * 0.10;
+            double tremolo = 0.80 + 0.20 * Math.Sin(2 * Math.PI * 18 * t);
+            double value = (fundamental + bite + grit) * 0.26 * envelope * tremolo;
             samples.Add((short)(value * short.MaxValue));
         }
     }
