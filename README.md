@@ -7,7 +7,7 @@ This repository contains a small mod suite for improving dispatch, MDT, bodycam,
 ```text
 E:\SteamLibrary\steamapps\common\Flashing Lights
 ```
-**Adjust for your game install directory**
+*** **Adjust for your game install directory** ***
 ## Mods
 
 - `GameEventLogger` - in-game event hooks, panic button behavior, weapon/fire detection, and dispatch audio sequencing.
