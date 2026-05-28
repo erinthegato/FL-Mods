@@ -26,6 +26,8 @@ public sealed class NPCInteractionUI
     private string _inputText = "";
     private string _activeNpcName = "Civilian";
     private string _npcRole = "Unknown";
+    private string _npcDob = "";
+    private string _npcAddress = "";
     private readonly List<string> _dialogue = new();
     private readonly List<float> _lineHeights = new();
     private bool _heightsDirty = true;
@@ -63,14 +65,16 @@ public sealed class NPCInteractionUI
 
         _titleStyle = new GUIStyle(GUI.skin.label)
         {
-            fontSize = 15, fontStyle = FontStyle.Bold,
+            fontSize = 15,
+            fontStyle = FontStyle.Bold,
             alignment = TextAnchor.MiddleCenter,
             normal = { textColor = new Color(0.2f, 0.6f, 1f) }
         };
 
         _chatStyle = new GUIStyle(GUI.skin.label)
         {
-            fontSize = 12, wordWrap = true,
+            fontSize = 12,
+            wordWrap = true,
             richText = true,
             normal = { textColor = Color.white }
         };
@@ -84,7 +88,8 @@ public sealed class NPCInteractionUI
 
         _statusStyle = new GUIStyle(GUI.skin.label)
         {
-            fontSize = 12, fontStyle = FontStyle.Italic,
+            fontSize = 12,
+            fontStyle = FontStyle.Italic,
             alignment = TextAnchor.MiddleCenter,
             normal = { textColor = Color.gray }
         };
@@ -107,19 +112,21 @@ public sealed class NPCInteractionUI
         return t;
     }
 
-    public void SetNpcContext(string name, string role, string personality)
+    public void SetNpcContext(string name, string role, string personality, string dob, string address)
     {
         _activeNpcName = name;
         _npcRole = role;
+        _npcDob = dob;
+        _npcAddress = address;
     }
 
     public string GetSystemContext()
     {
         var prompt = LoadPrompt();
         if (!string.IsNullOrEmpty(prompt))
-            return $"{prompt}\n\nYour name is {_activeNpcName}.";
+            return $"{prompt}\n\nYour name is {_activeNpcName}. Your date of birth is {_npcDob}. Your address is {_npcAddress}.";
         return $"You are roleplaying as an NPC named {_activeNpcName} in a police simulation game. " +
-               $"Your role is: {_npcRole}. " +
+               $"Your role is: {_npcRole}. Your DOB: {_npcDob}. Address: {_npcAddress}. " +
                $"Respond as this character would in a police interaction. Keep responses to 1-3 sentences. " +
                $"Never mention being an AI. Express emotion through word choice, not by naming it.";
     }
@@ -155,7 +162,7 @@ public sealed class NPCInteractionUI
         _heightsDirty = false;
     }
 
-    public string Draw(Rect rect, bool isLoading, NPCAIConfig config)
+    public string Draw(Rect rect, bool isLoading, NPCAIConfig config, NPCAIMod mod)
     {
         EnsureStyles();
 
@@ -174,7 +181,7 @@ public sealed class NPCInteractionUI
             y += 22;
         }
 
-        var chatRect = new Rect(rect.x + 4, y, rect.width - 8, rect.height - y - 136);
+        var chatRect = new Rect(rect.x + 4, y, rect.width - 8, rect.height - y - 180);
         GUI.BeginGroup(chatRect);
 
         float cw = chatRect.width, ch = chatRect.height;
@@ -200,12 +207,38 @@ public sealed class NPCInteractionUI
         GUI.EndScrollView();
         GUI.EndGroup();
 
-        float keyY = rect.y + rect.height - 104;
+        float keyY = rect.y + rect.height - 154;
         float keyW = (rect.width - 10) / 2f;
         config.ToggleKey = KeyBindWidget.Draw(new Rect(rect.x + 4, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.ToggleKey), "Toggle NPC AI", config.ToggleKey);
         config.SendKey = KeyBindWidget.Draw(new Rect(rect.x + 6 + keyW, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.SendKey), "Send", config.SendKey);
 
-        float iy2 = rect.y + rect.height - 80;
+        float iy2 = rect.y + rect.height - 130;
+
+        // ID, MDT, Dispatch buttons
+        if (config.EnableIdLookup || config.EnableDispatchIntegration)
+        {
+            float btnW = (rect.width - 16) / 3;
+            float btnX = rect.x + 4;
+            if (config.EnableIdLookup)
+            {
+                if (!isLoading && GUI.Button(new Rect(btnX, iy2, btnW, 22), "Ask for ID", _btnStyle!))
+                    return "[[ASK_ID]]";
+                btnX += btnW + 2;
+            }
+            if (config.EnableIdLookup)
+            {
+                if (!isLoading && GUI.Button(new Rect(btnX, iy2, btnW, 22), "MDT Lookup", _btnStyle!))
+                    return "[[MDT_LOOKUP]]";
+                btnX += btnW + 2;
+            }
+            if (config.EnableDispatchIntegration)
+            {
+                if (!isLoading && GUI.Button(new Rect(btnX, iy2, btnW, 22), "Notify Dispatch", _btnStyle!))
+                    return "[[DISPATCH]]";
+            }
+            iy2 += 26;
+        }
+
         var btnRect = new Rect(rect.x + 4, iy2, rect.width - 8, 22);
         if (!isLoading && GUI.Button(btnRect, $"Send ({config.SendKey})", _btnStyle!))
         {

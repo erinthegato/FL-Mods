@@ -1,9 +1,28 @@
 using System.Collections.Generic;
+using System.Linq;
 using FlashingLights.ModKit.Core;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace NPCAI;
+
+internal sealed class NpcIdentity
+{
+    public string Name { get; set; }
+    public string Role { get; set; }
+    public string Personality { get; set; }
+    public string DateOfBirth { get; set; }
+    public string Address { get; set; }
+
+    public NpcIdentity(string name, string role, string personality, string dob, string address)
+    {
+        Name = name;
+        Role = role;
+        Personality = personality;
+        DateOfBirth = dob;
+        Address = address;
+    }
+}
 
 [ModKitManifest(
     Id = "npc-ai",
@@ -36,8 +55,8 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private Vector3 _lastInteractionPosition;
     private bool _hasLastInteractionPosition;
     private const float SamePositionTolerance = 1.5f;
-    private const float NearbyScanInterval = 0.5f;
-    private const float NpcCacheRefreshInterval = 4f;
+
+    private readonly Dictionary<string, NpcIdentity> _npcIdentityCache = new();
 
     private static readonly string[] _personalities = new[]
     {
@@ -50,6 +69,10 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         "professional and measured (off-duty cop or military)",
         "drunk and slurring, rambling and unhelpful"
     };
+
+    private const string InjuredPersonality = "injured and in pain, groaning, slow and strained speech, may ask for medical help";
+    private const string FleeingPersonality = "breathing heavily, panicked, defensive, trying to get away, constantly looking over shoulder";
+    private const string HostilePersonality = "angry, aggressive, challenging authority, using profanity, ready to fight";
 
     private static readonly string[] _names = new[]
     {
@@ -67,28 +90,26 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private string _currentNpcName = "Civilian";
     private string _currentNpcRole = "witness";
     private string _currentPersonality = "cooperative and calm";
+    private string _currentNpcDob = "01/01/1980";
+    private string _currentNpcAddress = "123 Main St, Anytown";
 
     protected override void OnModKitInitialized()
     {
         Instance = this;
-
         _chat = new ChatService();
         _ui = new NPCInteractionUI();
         Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
         Config.SendKey = KeyBindStore.Load(KeyBindFile, nameof(Config.SendKey), Config.SendKey);
-
         LogInfo("NPC AI initialized. Press F9 to interact.");
     }
 
-    protected override void OnModKitEnabled()
-    {
-        LogInfo("NPC AI enabled.");
-    }
+    protected override void OnModKitEnabled() => LogInfo("NPC AI enabled.");
 
     protected override void OnModKitDisabled()
     {
         _uiVisible = false;
         _cts?.Cancel();
+        _chat.StopTts();
         RestoreCursor();
         LogInfo("NPC AI disabled.");
     }
@@ -118,7 +139,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
             OnUiOpened(_nearbyNpc);
         }
 
-        if (_uiVisible && FindNearbyNpc() == null)
+        if (!LowPerformanceScanning && _uiVisible && FindNearbyNpc() == null)
         {
             CloseUi(clearConversation: false);
             return;
@@ -142,18 +163,20 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     {
         _uiVisible = false;
         _cts?.Cancel();
-        if (clearConversation)
-            _chat.ClearHistory();
+        if (clearConversation) _chat.ClearHistory();
         _ui.OnGuiLostFocus();
         RestoreCursor();
     }
 
     private GameObject? FindNearbyNpc(bool force = false)
     {
+        if (!force && LowPerformanceScanning && !_uiVisible)
+            return null;
+
         if (!force && Time.unscaledTime < _nextNpcScanTime && IsValidNpc(_nearbyNpc))
             return _nearbyNpc;
 
-        _nextNpcScanTime = Time.unscaledTime + NearbyScanInterval;
+        _nextNpcScanTime = Time.unscaledTime + Math.Max(0.25f, Config.NearbyScanIntervalSeconds);
         if (force || Time.unscaledTime >= _nextNpcCacheRefreshTime)
             RefreshNpcCache();
 
@@ -192,9 +215,12 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private static bool IsValidNpc(GameObject? go) =>
         go != null && go.scene.IsValid() && go.activeInHierarchy && IsNpcCandidate(go) && HasNpcBody(go);
 
+    private bool LowPerformanceScanning =>
+        Config.PerformanceMode || !PerformanceSettings.Current.NpcAiScansAllowed;
+
     private void RefreshNpcCache()
     {
-        _nextNpcCacheRefreshTime = Time.unscaledTime + NpcCacheRefreshInterval;
+        _nextNpcCacheRefreshTime = Time.unscaledTime + Math.Max(2f, Config.NpcCacheRefreshIntervalSeconds);
         _npcCandidates.Clear();
 
         var scene = SceneManager.GetActiveScene();
@@ -210,7 +236,6 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private void CollectNpcCandidates(Transform root)
     {
         if (root == null) return;
-
         var go = root.gameObject;
         if (IsValidNpc(go))
         {
@@ -249,7 +274,6 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
                 return true;
             parent = parent.parent;
         }
-
         return false;
     }
 
@@ -275,6 +299,44 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         return camera;
     }
 
+    private enum NpcContextState { Normal, Injured, Fleeing, Hostile, Cooperative }
+    private NpcContextState DetectNpcState(GameObject npc)
+    {
+        if (IsNpcInjured(npc)) return NpcContextState.Injured;
+        if (IsNpcFleeing(npc)) return NpcContextState.Fleeing;
+        if (IsNpcHostile(npc)) return NpcContextState.Hostile;
+        return NpcContextState.Cooperative;
+    }
+
+    private bool IsNpcInjured(GameObject npc) =>
+        npc.name.Contains("Injured", StringComparison.OrdinalIgnoreCase);
+
+	private bool IsNpcFleeing(GameObject npc)
+{
+    var rb = npc.GetComponent<Rigidbody>();
+    if (rb != null && rb.velocity.magnitude > 3f) return true;
+
+    var anim = npc.GetComponentInChildren<Animator>();
+    if (anim != null)
+    {
+        // GetBool returns false if the parameter doesn't exist, safe to use directly
+        return anim.GetBool("isRunning");
+    }
+    return false;
+}
+
+    private bool IsNpcHostile(GameObject npc) =>
+        npc.name.Contains("Hostile", StringComparison.OrdinalIgnoreCase) || npc.CompareTag("Enemy");
+
+    private string GenerateConsistentDob() =>
+        $"{UnityEngine.Random.Range(1, 13)}/{UnityEngine.Random.Range(1, 29)}/{UnityEngine.Random.Range(1960, 2005)}";
+
+    private string GenerateConsistentAddress() =>
+        $"{UnityEngine.Random.Range(100, 9999)} {new[] { "Main", "Oak", "Pine", "Maple", "Cedar" }[UnityEngine.Random.Range(0, 5)]} St, {new[] { "Springfield", "Lakewood", "Hillcrest", "Fairview", "Riverside" }[UnityEngine.Random.Range(0, 5)]}";
+
+    private string GetCacheKey(GameObject npc) =>
+        $"{SceneManager.GetActiveScene().buildIndex}_{npc.GetInstanceID()}";
+
     private void OnUiOpened(GameObject npc)
     {
         _cts?.Dispose();
@@ -286,19 +348,49 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         bool samePosition = _hasLastInteractionPosition &&
                             (playerPos - _lastInteractionPosition).sqrMagnitude <= SamePositionTolerance * SamePositionTolerance;
 
-        if (!samePosition)
+        string key = GetCacheKey(npc);
+        if (!_npcIdentityCache.TryGetValue(key, out var identity))
         {
-            _chat.ClearHistory();
-            _ui.Clear();
-            _currentNpcName = ResolveNpcName(npc);
-            _currentNpcRole = _roles[UnityEngine.Random.Range(0, _roles.Length)];
-            _currentPersonality = _personalities[UnityEngine.Random.Range(0, _personalities.Length)];
+            string name = ResolveNpcName(npc);
+            string role = _roles[UnityEngine.Random.Range(0, _roles.Length)];
+            string personality = _personalities[UnityEngine.Random.Range(0, _personalities.Length)];
+            string dob = GenerateConsistentDob();
+            string address = GenerateConsistentAddress();
+
+            NpcContextState state = DetectNpcState(npc);
+            switch (state)
+            {
+                case NpcContextState.Injured:
+                    personality = InjuredPersonality;
+                    role = "victim";
+                    break;
+                case NpcContextState.Fleeing:
+                    personality = FleeingPersonality;
+                    role = "suspect";
+                    break;
+                case NpcContextState.Hostile:
+                    personality = HostilePersonality;
+                    role = "suspect";
+                    break;
+                case NpcContextState.Cooperative:
+                    if (role == "suspect") role = "bystander";
+                    break;
+            }
+
+            identity = new NpcIdentity(name, role, personality, dob, address);
+            _npcIdentityCache[key] = identity;
         }
+
+        _currentNpcName = identity.Name;
+        _currentNpcRole = identity.Role;
+        _currentPersonality = identity.Personality;
+        _currentNpcDob = identity.DateOfBirth;
+        _currentNpcAddress = identity.Address;
 
         _lastInteractionPosition = playerPos;
         _hasLastInteractionPosition = true;
 
-        _ui.SetNpcContext(_currentNpcName, _currentNpcRole, _currentPersonality);
+        _ui.SetNpcContext(_currentNpcName, _currentNpcRole, _currentPersonality, _currentNpcDob, _currentNpcAddress);
         _chat.SetSystemContext(_ui.GetSystemContext());
 
         if (!samePosition)
@@ -334,9 +426,8 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         _chat.AudioVolume = Config.AudioVolume;
 
         var response = await _chat.SendMessageAsync(
-            "An officer approaches you. " +
-            $"Your name is {_currentNpcName}, your role is {_currentNpcRole}. " +
-            $"Respond naturally as this character. Say something appropriate for the situation.");
+            $"An officer approaches you. Your name is {_currentNpcName}, your role is {_currentNpcRole}. " +
+            $"Your personality: {_currentPersonality}. Respond naturally as this character. Say something appropriate for the situation.");
 
         if (!_cts!.IsCancellationRequested)
         {
@@ -354,16 +445,51 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         _ui.IsThinking = true;
         _ui.SetStatus("");
 
-        var response = await _chat.SendMessageAsync(message);
-
-        if (!_cts!.IsCancellationRequested)
+        if (message == "[[ASK_ID]]" && Config.EnableIdLookup)
         {
-            _ui.AddDialogue(_currentNpcName, response);
-            _chat.SpeakText(response);
+            string idMessage = $"The officer asks for your identification. You hand over your ID card showing Name: {_currentNpcName}, DOB: {_currentNpcDob}, Address: {_currentNpcAddress}. Respond as the character while providing the ID.";
+            var idResponse = await _chat.SendMessageAsync(idMessage);
+            if (!_cts!.IsCancellationRequested)
+            {
+                _ui.AddDialogue(_currentNpcName, idResponse);
+                _chat.SpeakText(idResponse);
+            }
+        }
+        else if (message == "[[MDT_LOOKUP]]" && Config.EnableIdLookup)
+        {
+            string mdtMessage = $"The officer runs your name ({_currentNpcName}) through MDT. " +
+                               $"Generate a realistic criminal record or clean record (50/50 chance). " +
+                               $"If clean: say 'No warrants, no priors.' If record exists: mention minor offenses (e.g., 'I had a DUI in 2018' or 'public intoxication last year'). " +
+                               $"Respond as the character hearing the officer read the MDT results.";
+            var mdtResponse = await _chat.SendMessageAsync(mdtMessage);
+            if (!_cts!.IsCancellationRequested)
+            {
+                _ui.AddDialogue(_currentNpcName, mdtResponse);
+                _chat.SpeakText(mdtResponse);
+            }
+        }
+        else if (message == "[[DISPATCH]]" && Config.EnableDispatchIntegration)
+        {
+            NotifyDispatch();
+            _ui.SetStatus("Dispatch notified.");
+        }
+        else
+        {
+            var response = await _chat.SendMessageAsync(message);
+            if (!_cts!.IsCancellationRequested)
+            {
+                _ui.AddDialogue(_currentNpcName, response);
+                _chat.SpeakText(response);
+            }
         }
 
         _isWaiting = false;
         _ui.IsThinking = false;
+    }
+
+    private void NotifyDispatch()
+    {
+        LogInfo($"Dispatch notification: Officer interacting with {_currentNpcName} ({_currentNpcRole}) at approx {_lastInteractionPosition}");
     }
 
     protected override void OnModKitGui()
@@ -371,10 +497,10 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         if (!_uiVisible) return;
         if (FindNearbyNpc() == null) return;
 
-        float w = 420, h = 460;
+        float w = 420, h = 520;
         var rect = new Rect(Screen.width - w - 10, 60, w, h);
 
-        var sent = _ui.Draw(rect, _isWaiting, Config);
+        var sent = _ui.Draw(rect, _isWaiting, Config, this);
         if (!string.IsNullOrEmpty(sent))
         {
             _ui.AddDialogue("Player", sent);

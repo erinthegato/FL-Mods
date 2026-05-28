@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
+    <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">

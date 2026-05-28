@@ -10,6 +10,10 @@
     <Il2CppAssemblies>$(GameRoot)MelonLoader\Il2CppAssemblies\</Il2CppAssemblies>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
+    <Compile Include="..\Shared\RuntimeAudioPlayer.cs" Link="RuntimeAudioPlayer.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
       <HintPath>..\GrammarPoliceMod\Lib\FlashingLights.ModKit.Core.dll</HintPath>
       <Private>true</Private>

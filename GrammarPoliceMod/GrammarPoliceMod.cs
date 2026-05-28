@@ -25,7 +25,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     internal double ConfidenceThreshold => Config.ConfidenceThreshold;
     internal bool VerboseLogging => Config.VerboseLogging;
-    internal bool VoiceRecognitionEnabled => Config.VoiceRecognitionEnabled;
+    internal bool VoiceRecognitionEnabled => Config.VoiceRecognitionEnabled && PerformanceSettings.Current.VoiceRecognitionAllowed;
     internal bool AutoDispatchEnabled => Config.AutoDispatchBackup;
     internal bool KeyEmulationEnabled => Config.KeyEmulationEnabled;
     internal DispatchAudio DispatchAudio => _dispatchAudio;
@@ -125,7 +125,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
             LogDebug($"Radio UI toggled: {_uiVisible}");
         }
 
-        bool pttHeld = Config.VoiceRecognitionEnabled && Input.GetKey(Config.PushToTalkKey);
+        bool pttHeld = VoiceRecognitionEnabled && _commandEngine.IsVoiceAvailable && Input.GetKey(Config.PushToTalkKey);
         if (pttHeld && !_pttWasHeld)
         {
             _commandEngine.Start();
@@ -175,7 +175,6 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
                 Screen.height - 320,
                 400,
                 300);
-
             _radioUI.RenderPanel(radioRect, _commandEngine, Config);
         }
 
@@ -183,26 +182,39 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
             _radioUI.RenderOverlay();
     }
 
+    private string GetCurrentRole()
+    {
+        var player = GameObject.FindGameObjectWithTag("Player");
+        if (player != null)
+        {
+            if (player.name.Contains("Fire")) return "Fire";
+            if (player.name.Contains("Ambulance") || player.name.Contains("EMS")) return "EMS";
+        }
+        return Config.CurrentRole;
+    }
+
     private void TriggerPanic()
     {
-        string code = Config.PanicDispatchCode;
-        string message = Config.PanicDispatchMessage;
+        string role = GetCurrentRole();
+        if (!Config.PanicProfiles.TryGetValue(role, out var profile))
+            profile = Config.PanicProfiles["Law"];
 
-        if (Config.PanicAudioEnabled)
-        {
-            string file = Config.PanicAudioFile;
-            if (string.IsNullOrWhiteSpace(file) && _dispatchAudio.PanicAudioFiles.Count > 0)
-                file = _dispatchAudio.PanicAudioFiles[0];
-            if (!string.IsNullOrWhiteSpace(file))
-                _dispatchAudio.PlayPanicTone(file);
-        }
+        if (!profile.Enabled) return;
 
-        if (Config.KeyEmulationEnabled && !string.IsNullOrWhiteSpace(Config.PanicKeySequence))
-            KeySimulator.PressSequence(Config.PanicKeySequence, 1000);
+        string code = profile.DispatchCode;
+        string message = profile.DispatchMessage;
+
+        if (Config.PanicAudioEnabled && !string.IsNullOrWhiteSpace(profile.AudioFile))
+            _dispatchAudio.PlayPanicTone(profile.AudioFile);
+        else if (Config.PanicAudioEnabled && _dispatchAudio.PanicAudioFiles.Count > 0)
+            _dispatchAudio.PlayPanicTone(_dispatchAudio.PanicAudioFiles[0]);
+
+        if (Config.KeyEmulationEnabled && !string.IsNullOrWhiteSpace(profile.KeySequence))
+            KeySimulator.PressSequence(profile.KeySequence, 1000);
 
         _commandEngine.ExecuteCommand(code, message);
         PanicTriggered?.Invoke();
-        LogInfo($"Panic triggered: {code} - {message}");
+        LogInfo($"Panic triggered ({role}): {code} - {message}");
     }
 
     private void LoadKeyBinds()
@@ -246,7 +258,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     protected override void OnConfigApplied(GrammarPoliceConfig currentConfig)
     {
         _radioUI.SetOverlayDuration(currentConfig.OverlayDisplaySeconds);
-        LogInfo($"Config applied: voice={currentConfig.VoiceRecognitionEnabled} confidence={currentConfig.ConfidenceThreshold}");
+        LogInfo($"Config applied: voice={VoiceRecognitionEnabled} confidence={currentConfig.ConfidenceThreshold}");
     }
 
     protected override void OnConfigReloaded(GrammarPoliceConfig previous, GrammarPoliceConfig current)

@@ -57,23 +57,28 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             "..", "OfflineScanner"));
 
         _offlinePlayer = new OfflineScannerPlayer(_audioPlayer);
-        _offlinePlayer.FileChanged += (file) => LogDebug($"Offline Scanner: now playing {file}");
+        _offlinePlayer.FileChanged += (file) => DebugLog($"Offline Scanner: now playing {file}");
         _prevOfflineMode = Config.OfflineMode;
 
         _audioPlayer.PlaybackStarted += () =>
         {
             _currentStation = _radioUI.ActiveFeedName;
-            LogDebug($"Playback started: {_currentStation}");
+            DebugLog($"Playback started: {_currentStation}");
         };
         _audioPlayer.PlaybackStopped += () =>
         {
             _currentStation = null;
-            LogDebug("Playback stopped.");
+            DebugLog("Playback stopped.");
         };
 
         GrammarPoliceMod.GrammarPoliceMod.PanicTriggered += OnPanicTriggered;
 
-        if (Config.OfflineMode)
+        if (!PerformanceSettings.Current.RadioStreamingAllowed)
+        {
+            _isLoading = false;
+            LogInfo("Background radio streaming disabled by PerformanceMode.json.");
+        }
+        else if (Config.OfflineMode)
         {
             StartOfflinePlayback();
         }
@@ -146,6 +151,26 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
 
     protected override void OnModKitUpdate()
     {
+        bool radioAllowed = PerformanceSettings.Current.RadioStreamingAllowed;
+        if (!radioAllowed)
+        {
+            _noInternet = false;
+            _panicBlocked = false;
+            _wasPlayingBeforePanic = false;
+            _offlinePlayer.Stop();
+            _audioPlayer.Stop();
+            _currentStation = null;
+
+            if (Input.GetKeyDown(Config.ToggleKey))
+            {
+                _uiVisible = !_uiVisible;
+                UpdateCursor();
+                DebugLog($"Radio UI toggled: {_uiVisible}");
+            }
+
+            return;
+        }
+
         if (Config.OfflineMode)
         {
             _noInternet = false;
@@ -208,11 +233,12 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         {
             _uiVisible = !_uiVisible;
             UpdateCursor();
-            LogDebug($"Radio UI toggled: {_uiVisible}");
+            DebugLog($"Radio UI toggled: {_uiVisible}");
         }
 
         if (!_uiVisible) return;
         if (KeyBindWidget.IsCapturing) return;
+        if (!radioAllowed) return;
 
         _radioUI.HandleKeyboard(_broadcastify, _audioPlayer, Config, _offlinePlayer);
     }
@@ -257,6 +283,14 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             return;
         }
 
+        if (!PerformanceSettings.Current.RadioStreamingAllowed)
+        {
+            float pw = 380, ph = 100;
+            var pRect = new Rect(Screen.width - pw - 10, 60, pw, ph);
+            GUI.Box(pRect, "Background Radio\n\nStreaming is disabled by PerformanceMode.json.");
+            return;
+        }
+
         float w = 380, h = 500;
         var rect = new Rect(Screen.width - w - 10, 60, w, h);
         _radioUI.Draw(rect, _broadcastify, _audioPlayer, Config, _isLoading, _currentStation, _offlinePlayer);
@@ -290,5 +324,11 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
+    }
+
+    private void DebugLog(string message)
+    {
+        if (Config.DebugLogging)
+            LogDebug(message);
     }
 }

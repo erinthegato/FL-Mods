@@ -44,6 +44,10 @@ public sealed class ChatService : IDisposable
 
     public async Task<string> SendMessageAsync(string message)
     {
+        // Skip internal UI commands
+        if (!string.IsNullOrEmpty(message) && message.StartsWith("[["))
+            return "";
+
         if (!IsConfigured)
             return "API key not configured. Set it in FL-Modkit config and restart.";
 
@@ -55,6 +59,13 @@ public sealed class ChatService : IDisposable
                 Content = new StringContent(BuildRequestBody(message), Encoding.UTF8, "application/json")
             };
             request.Headers.Add("Authorization", $"Bearer {_apiKey}");
+
+            // Optional: OpenRouter headers
+            if (_endpoint.Contains("openrouter"))
+            {
+                request.Headers.Add("HTTP-Referer", "https://github.com/yourmod");
+                request.Headers.Add("X-Title", "NPCAI Mod");
+            }
 
             using var response = await _http.SendAsync(request, Cancellation);
             var responseJson = await response.Content.ReadAsStringAsync();
@@ -135,6 +146,20 @@ public sealed class ChatService : IDisposable
         _ttsStdin.Flush();
     }
 
+    public void StopTts()
+    {
+        try
+        {
+            _ttsStdin?.Close();
+            if (_ttsProcess != null && !_ttsProcess.HasExited)
+                _ttsProcess.Kill();
+            _ttsProcess?.Dispose();
+            _ttsStdin = null;
+            _ttsProcess = null;
+        }
+        catch { }
+    }
+
     private string BuildRequestBody(string message)
     {
         using var stream = new MemoryStream();
@@ -168,7 +193,6 @@ public sealed class ChatService : IDisposable
         writer.WriteEndArray();
 
         writer.WriteNumber("temperature", 0.9);
-
         writer.WriteNumber("max_tokens", 250);
         writer.WriteEndObject();
         writer.Flush();
@@ -221,14 +245,7 @@ public sealed class ChatService : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            _ttsStdin?.Close();
-            _ttsProcess?.Kill();
-            _ttsProcess?.Dispose();
-        }
-        catch { }
-
+        StopTts();
         _http.Dispose();
     }
 }

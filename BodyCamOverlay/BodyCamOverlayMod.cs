@@ -1,8 +1,6 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Reflection;
-using System.Threading.Tasks;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
@@ -23,7 +21,6 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override string ModId => "bodycam-overlay";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
-    private const float WeaponPollInterval = 0.75f;
     private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
 
     private GameObject? _cachedPlayer;
@@ -38,6 +35,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private int _emergencyTriggerPresses;
     private string _signalPath = "";
     private bool _isPlayingSignal;
+    private RuntimeAudioPlayer? _audioPlayer;
 
     private static GUIStyle? _topStyle;
     private static GUIStyle? _smallStyle;
@@ -49,6 +47,9 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     {
         _signalPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "AxonSignal.wav");
         EnsureSignalWav(_signalPath);
+        _audioPlayer = new RuntimeAudioPlayer(
+            debugLog: msg => { if (Config.DebugLogging) LogDebug(msg); },
+            warningLog: msg => MelonLogger.Warning($"[BodyCamOverlay] {msg}"));
     }
 
     protected override void OnModKitDisabled()
@@ -58,6 +59,8 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         _cachedWeapon = null;
         _cachedPlayer = null;
         _weaponCandidates.Clear();
+        _audioPlayer?.Dispose();
+        _audioPlayer = null;
     }
 
     protected override void OnModKitUpdate()
@@ -74,8 +77,10 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
         PollEmergencyTrigger();
 
-        if (Config.TriggerOnWeaponDraw)
+        if (Config.TriggerOnWeaponDraw && PerformanceSettings.Current.BodycamWeaponPollingAllowed)
             PollWeaponDraw();
+        else
+            _weaponWasDrawn = false;
 
         if (!_overlayActive) return;
 
@@ -133,30 +138,8 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     {
         _signalTimer = Math.Max(10f, Config.SignalIntervalSeconds);
         if (_isPlayingSignal || !File.Exists(_signalPath)) return;
-        _ = PlaySignalAsync();
-    }
-
-    private async Task PlaySignalAsync()
-    {
         _isPlayingSignal = true;
-        await Task.Run(() =>
-        {
-            try
-            {
-                var psi = new ProcessStartInfo("powershell")
-                {
-                    Arguments = $"-NoProfile -Command \"(New-Object Media.SoundPlayer '{_signalPath.Replace("'", "''")}').PlaySync()\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                proc?.WaitForExit();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BodyCamOverlay] Signal audio failed: {ex.Message}");
-            }
-        });
+        _audioPlayer?.Play(_signalPath);
         _isPlayingSignal = false;
     }
 
@@ -165,7 +148,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         _weaponPollTimer -= Time.unscaledDeltaTime;
         if (_weaponPollTimer <= 0f)
         {
-            _weaponPollTimer = WeaponPollInterval;
+            _weaponPollTimer = Math.Max(0.25f, Config.WeaponPollIntervalSeconds);
             DiscoverWeapon();
         }
 
@@ -225,7 +208,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
 
     private void RefreshWeaponCache()
     {
-        _nextWeaponCacheRefreshTime = Time.unscaledTime + 12f;
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + Math.Max(5f, Config.WeaponCacheRefreshSeconds);
         _weaponCandidates.Clear();
 
         var scene = SceneManager.GetActiveScene();

@@ -24,6 +24,8 @@ E:\SteamLibrary\steamapps\common\Flashing Lights
 
 Recent optimization work focused on reducing CPU spikes and FPS stutter:
 
+- A shared performance-mode file is created at `UserData\FLMods\PerformanceMode.json`.
+- When enabled, it can centrally suppress voice recognition, asset startup autoload, bodycam weapon polling, radio streaming, and background NPCAI scans.
 - Panic, dispatch, and bodycam WAV playback now uses a shared persistent audio helper instead of spawning a new PowerShell process for every sound.
 - Weapon polling and weapon cache refresh intervals are configurable in the relevant mod configs.
 - NPCAI nearby scans and NPC cache refreshes are configurable to reduce scene scanning overhead.
@@ -54,6 +56,29 @@ E:\SteamLibrary\steamapps\common\Flashing Lights\UserData\FLMods\Assets
 E:\SteamLibrary\steamapps\common\Flashing Lights\DispatchAudio\Panic Button
 E:\SteamLibrary\steamapps\common\Flashing Lights\DispatchAudio\Panic Button\Code99
 ```
+
+## Performance Mode
+
+The shared performance switch lives here after any linked mod starts:
+
+```text
+E:\SteamLibrary\steamapps\common\Flashing Lights\UserData\FLMods\PerformanceMode.json
+```
+
+Default file:
+
+```json
+{
+  "enabled": false,
+  "disableVoiceRecognition": true,
+  "disableAssetAutoload": true,
+  "disableBodycamWeaponPolling": true,
+  "disableRadioStreaming": true,
+  "disableNpcAiScans": true
+}
+```
+
+Set `"enabled": true` when you want the low-overhead profile. Manual controls still work where practical, but background/autoload work is suppressed.
 
 ## Debugging
 

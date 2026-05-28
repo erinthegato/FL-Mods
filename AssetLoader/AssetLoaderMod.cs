@@ -27,8 +27,10 @@ public sealed class AssetLoaderMod : ModKitMelonMod<AssetLoaderConfig>
         _assetRoot = Path.Combine(FindGameRoot(), "UserData", "FLMods", "Assets");
         Directory.CreateDirectory(_assetRoot);
 
-        if (Config.Enabled && Config.AutoLoadOnStartup)
+        if (Config.Enabled && Config.AutoLoadOnStartup && PerformanceSettings.Current.AssetAutoloadAllowed)
             ReloadBundles();
+        else if (Config.Enabled && Config.AutoLoadOnStartup)
+            MelonLogger.Msg("[AssetLoader] Startup autoload skipped by PerformanceMode.json.");
     }
 
     protected override void OnModKitUpdate()

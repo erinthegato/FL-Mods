@@ -1,7 +1,5 @@
 using System.IO;
-using System.Diagnostics;
 using System.Reflection;
-using System.Threading.Tasks;
 using FlashingLights.ModKit.Core;
 using MelonLoader;
 using UnityEngine;
@@ -23,7 +21,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     // ── Weapon panic ──
     private float _weaponTimer;
-    private const float WeaponInterval = 0.5f;
     private GameObject? _cachedPlayer;
     private Transform? _cachedWeapon;
     private int _shotCount;
@@ -37,6 +34,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     private bool _loggedMissingCode99;
     private float _nextWeaponCacheRefreshTime;
     private readonly List<Transform> _weaponCandidates = new();
+    private RuntimeAudioPlayer? _audioPlayer;
     private MethodInfo? _triggerPanic;
     private object? _gpInstance;
     private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
@@ -49,6 +47,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
     {
         CacheReflectionHandles();
         CachePanicAudioPaths();
+        _audioPlayer = new RuntimeAudioPlayer(warningLog: msg => MelonLogger.Warning($"[GameEventLogger] {msg}"));
     }
 
     protected override void OnModKitUpdate()
@@ -72,6 +71,8 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _cachedPlayer = null;
         _shotCount = 0;
         _weaponCandidates.Clear();
+        _audioPlayer?.Dispose();
+        _audioPlayer = null;
     }
 
     // ═══════════════════════════════════════════════════
@@ -106,7 +107,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _weaponTimer -= Time.unscaledDeltaTime;
         if (_weaponTimer <= 0f && (_cachedWeapon == null || !_cachedWeapon.gameObject.activeInHierarchy))
         {
-            _weaponTimer = WeaponInterval;
+            _weaponTimer = Math.Max(0.25f, Config.WeaponPollIntervalSeconds);
             DiscoverWeapon(allowSceneCache: false);
         }
 
@@ -196,7 +197,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
     private void RefreshWeaponCache()
     {
-        _nextWeaponCacheRefreshTime = Time.unscaledTime + 12f;
+        _nextWeaponCacheRefreshTime = Time.unscaledTime + Math.Max(5f, Config.WeaponCacheRefreshSeconds);
         _weaponCandidates.Clear();
 
         var scene = SceneManager.GetActiveScene();
@@ -252,7 +253,7 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
 
         MelonLogger.Msg($"[GameEventLogger] PANIC: {weapon} fired {Config.ShotsToPanic} rounds - dispatching backup");
 
-        _ = PlayPanicSequenceAsync();
+        PlayPanicSequence();
         try { _triggerPanic?.Invoke(_gpInstance, null); } catch { }
 
         DispatchNativeBackup();
@@ -267,25 +268,23 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         _code99Files = LoadWavs(_code99Dir);
     }
 
-    private async Task PlayPanicSequenceAsync()
+    private void PlayPanicSequence()
     {
         string? tone = PickRandomWav(_panicToneFiles);
-        if (tone != null)
-            await PlayWavSyncAsync(tone);
-        else if (!_loggedMissingPanicTone)
+        if (tone == null && !_loggedMissingPanicTone)
         {
             _loggedMissingPanicTone = true;
             MelonLogger.Warning($"[GameEventLogger] No panic button tones found in {_panicButtonDir}");
         }
 
         string? code99 = PickRandomWav(_code99Files);
-        if (code99 != null)
-            await PlayWavSyncAsync(code99);
-        else if (!_loggedMissingCode99)
+        if (code99 == null && !_loggedMissingCode99)
         {
             _loggedMissingCode99 = true;
             MelonLogger.Warning($"[GameEventLogger] No Code99 files found in {_code99Dir}");
         }
+
+        _audioPlayer?.PlaySequence(tone, code99);
     }
 
     private static string[] LoadWavs(string dir)
@@ -307,29 +306,6 @@ public sealed class GameEventLoggerMod : ModKitMelonMod<LoggerConfig>
         if (files.Length == 0) return null;
         return files[UnityEngine.Random.Range(0, files.Length)];
     }
-
-    private static async Task PlayWavSyncAsync(string path)
-    {
-        await Task.Run(() =>
-        {
-            try
-            {
-                var psi = new ProcessStartInfo("powershell")
-                {
-                    Arguments = $"-NoProfile -Command \"(New-Object Media.SoundPlayer '{path.Replace("'", "''")}').PlaySync()\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                proc?.WaitForExit();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[GameEventLogger] Panic audio failed: {ex.Message}");
-            }
-        });
-    }
-
 
     private void DispatchNativeBackup()
     {

@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using MelonLoader;
 
 namespace GrammarPoliceMod;
@@ -13,6 +11,7 @@ public sealed class DispatchAudio
     public static volatile bool AudioDuckActive;
 
     private readonly Dictionary<string, string> _audioFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly RuntimeAudioPlayer _audioPlayer;
     private string _audioDir = string.Empty;
     private string _panicDir = string.Empty;
     private string[] _panicFiles = Array.Empty<string>();
@@ -21,6 +20,10 @@ public sealed class DispatchAudio
 
     public DispatchAudio()
     {
+        _audioPlayer = new RuntimeAudioPlayer(
+            debugLog: msg => { if (GrammarPoliceMod.Instance.VerboseLogging) MelonLogger.Msg($"[DispatchAudio] {msg}"); },
+            warningLog: msg => MelonLogger.Warning($"[DispatchAudio] {msg}"));
+
         try
         {
             _audioDir = Path.Combine(
@@ -80,8 +83,9 @@ public sealed class DispatchAudio
             return;
         }
 
-        MelonLogger.Msg($"[DispatchAudio] Playing: {code} ({Path.GetFileName(path)})");
-        _ = PlayCoreAsync(path);
+        if (GrammarPoliceMod.Instance.VerboseLogging)
+            MelonLogger.Msg($"[DispatchAudio] Playing: {code} ({Path.GetFileName(path)})");
+        PlayCore(path);
     }
 
     public void PlayAsync(string code)
@@ -90,8 +94,9 @@ public sealed class DispatchAudio
         var path = FindAudio(code);
         if (path == null) return;
 
-        MelonLogger.Msg($"[DispatchAudio] Playing async: {code}");
-        _ = PlayCoreAsync(path);
+        if (GrammarPoliceMod.Instance.VerboseLogging)
+            MelonLogger.Msg($"[DispatchAudio] Playing async: {code}");
+        PlayCore(path);
     }
 
     public void PlayPanicTone(string filename)
@@ -106,7 +111,8 @@ public sealed class DispatchAudio
                 if (_panicFiles.Length > 0)
                 {
                     path = Path.Combine(_panicDir, _panicFiles[0]);
-                    MelonLogger.Msg($"[DispatchAudio] Panic file '{filename}' not found, using '{_panicFiles[0]}'");
+                    if (GrammarPoliceMod.Instance.VerboseLogging)
+                        MelonLogger.Msg($"[DispatchAudio] Panic file '{filename}' not found, using '{_panicFiles[0]}'");
                 }
                 else
                 {
@@ -115,8 +121,9 @@ public sealed class DispatchAudio
                 }
             }
 
-            MelonLogger.Msg($"[DispatchAudio] Playing panic tone: {Path.GetFileName(path)}");
-            _ = PlayCoreAsync(path);
+            if (GrammarPoliceMod.Instance.VerboseLogging)
+                MelonLogger.Msg($"[DispatchAudio] Playing panic tone: {Path.GetFileName(path)}");
+            PlayCore(path);
         }
         catch (Exception ex)
         {
@@ -124,29 +131,10 @@ public sealed class DispatchAudio
         }
     }
 
-    private static async Task PlayCoreAsync(string path)
+    private void PlayCore(string path)
     {
         AudioDuckActive = true;
-
-        await Task.Run(() =>
-        {
-            try
-            {
-                var psi = new ProcessStartInfo("powershell")
-                {
-                    Arguments = $"-Command \"(New-Object Media.SoundPlayer '{path.Replace("'", "''")}').PlaySync()\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                proc?.WaitForExit();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[DispatchAudio] Play error: {ex.Message}");
-            }
-        });
-
+        _audioPlayer.Play(path);
         AudioDuckActive = false;
     }
 

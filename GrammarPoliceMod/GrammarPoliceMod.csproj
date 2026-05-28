@@ -11,6 +11,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
+    <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
+    <Compile Include="..\Shared\RuntimeAudioPlayer.cs" Link="RuntimeAudioPlayer.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
@@ -47,6 +49,10 @@
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>$(Il2CppAssemblies)UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Il2Cppmscorlib">

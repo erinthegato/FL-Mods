@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\KeyBinding.cs" Link="KeyBinding.cs" />
+    <Compile Include="..\Shared\PerformanceSettings.cs" Link="PerformanceSettings.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FlashingLights.ModKit.Core">
@@ -46,6 +47,10 @@
     </Reference>
     <Reference Include="UnityEngine.PhysicsModule">
       <HintPath>$(Il2CppAssemblies)UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(Il2CppAssemblies)UnityEngine.AnimationModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
