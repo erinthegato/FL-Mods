@@ -18,14 +18,19 @@ public sealed class AssetLoaderMod : ModKitMelonMod<AssetLoaderConfig>
     protected override string ModId => "fl-asset-loader";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
+    internal const string KeyBindFile = "AssetLoader.keybinds";
+
     private readonly List<AssetBundle> _bundles = new();
     private readonly List<GameObject> _instances = new();
     private string _assetRoot = "";
+    private KeyCode _reloadKey = KeyCode.F7;
+    private float _keyBindReloadTimer;
 
     protected override void OnModKitInitialized()
     {
         _assetRoot = Path.Combine(FindGameRoot(), "UserData", "FLMods", "Assets");
         Directory.CreateDirectory(_assetRoot);
+        LoadKeyBinds();
 
         if (Config.Enabled && Config.AutoLoadOnStartup && PerformanceSettings.Current.AssetAutoloadAllowed)
             ReloadBundles();
@@ -36,8 +41,21 @@ public sealed class AssetLoaderMod : ModKitMelonMod<AssetLoaderConfig>
     protected override void OnModKitUpdate()
     {
         if (!Config.Enabled) return;
-        if (Input.GetKeyDown(Config.ReloadKey))
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
+        {
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
+        }
+
+        if (Input.GetKeyDown(_reloadKey))
             ReloadBundles();
+    }
+
+    private void LoadKeyBinds()
+    {
+        _reloadKey = KeyBindStore.Load(KeyBindFile, nameof(_reloadKey), _reloadKey);
+        _reloadKey = KeyBindStore.Load(KeyBindFile, "ReloadKey", _reloadKey);
     }
 
     protected override void OnModKitDisabled()

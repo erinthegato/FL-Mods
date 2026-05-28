@@ -38,6 +38,12 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
     private bool _wasOfflineBeforePanic;
 
     private bool _noInternet;
+    private float _keyBindReloadTimer;
+    internal KeyCode ToggleKey { get; private set; } = KeyCode.F10;
+    internal KeyCode NavigateUpKey { get; private set; } = KeyCode.UpArrow;
+    internal KeyCode NavigateDownKey { get; private set; } = KeyCode.DownArrow;
+    internal KeyCode SelectKey { get; private set; } = KeyCode.Return;
+    internal KeyCode StopKey { get; private set; } = KeyCode.Space;
 
     private OfflineScannerPlayer _offlinePlayer = null!;
     private bool _prevOfflineMode;
@@ -128,7 +134,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
 
     protected override void OnModKitEnabled()
     {
-        LogInfo("Background Radio enabled. Press F10 to open.");
+        LogInfo($"Background Radio enabled. Press {ToggleKey} to open.");
     }
 
     protected override void OnModKitDisabled()
@@ -142,15 +148,22 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
 
     private void LoadKeyBinds()
     {
-        Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
-        Config.NavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(Config.NavigateUpKey), Config.NavigateUpKey);
-        Config.NavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(Config.NavigateDownKey), Config.NavigateDownKey);
-        Config.SelectKey = KeyBindStore.Load(KeyBindFile, nameof(Config.SelectKey), Config.SelectKey);
-        Config.StopKey = KeyBindStore.Load(KeyBindFile, nameof(Config.StopKey), Config.StopKey);
+        ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(ToggleKey), ToggleKey);
+        NavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(NavigateUpKey), NavigateUpKey);
+        NavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(NavigateDownKey), NavigateDownKey);
+        SelectKey = KeyBindStore.Load(KeyBindFile, nameof(SelectKey), SelectKey);
+        StopKey = KeyBindStore.Load(KeyBindFile, nameof(StopKey), StopKey);
     }
 
     protected override void OnModKitUpdate()
     {
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
+        {
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
+        }
+
         bool radioAllowed = PerformanceSettings.Current.RadioStreamingAllowed;
         if (!radioAllowed)
         {
@@ -161,7 +174,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             _audioPlayer.Stop();
             _currentStation = null;
 
-            if (Input.GetKeyDown(Config.ToggleKey))
+            if (Input.GetKeyDown(ToggleKey))
             {
                 _uiVisible = !_uiVisible;
                 UpdateCursor();
@@ -229,7 +242,7 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
             }
         }
 
-        if (Input.GetKeyDown(Config.ToggleKey) && !_panicBlocked)
+        if (Input.GetKeyDown(ToggleKey) && !_panicBlocked)
         {
             _uiVisible = !_uiVisible;
             UpdateCursor();
@@ -237,7 +250,6 @@ public sealed class BackgroundRadioMod : ModKitMelonMod<BackgroundRadioConfig>
         }
 
         if (!_uiVisible) return;
-        if (KeyBindWidget.IsCapturing) return;
         if (!radioAllowed) return;
 
         _radioUI.HandleKeyboard(_broadcastify, _audioPlayer, Config, _offlinePlayer);

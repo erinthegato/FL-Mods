@@ -9,12 +9,6 @@ public sealed class BodyCamConfig
     public bool TriggerOnWeaponDraw { get; set; } = true;
     public bool DebugLogging { get; set; } = false;
 
-    [ModKitConfigDisplay("Toggle Bodycam Overlay Key")]
-    public KeyCode ToggleKey { get; set; } = KeyCode.F8;
-
-    [ModKitConfigDisplay("Bodycam Emergency Trigger Key")]
-    public KeyCode EmergencyTriggerKey { get; set; } = KeyCode.Alpha2;
-
     [ModKitConfigDisplay("Emergency Trigger Press Count")]
     [ModKitConfigRange(1, 10, 1)]
     public int EmergencyTriggerPressCount { get; set; } = 3;

@@ -200,13 +200,11 @@ public sealed class RadioUI
 
         GUI.EndGroup();
 
-        float by = rect.y + rect.height - 108;
-        DrawKeyBinds(rect, config, by);
-        by = rect.y + rect.height - 30;
+        float by = rect.y + rect.height - 30;
         _infoStyle!.normal.textColor = Color.gray;
         string hint = offline
-            ? $"{config.NavigateUpKey}/{config.NavigateDownKey}: Navigate  {config.SelectKey}: Play  {config.StopKey}: Stop  {config.ToggleKey}: Close"
-            : $"{config.NavigateUpKey}/{config.NavigateDownKey}: Navigate  {config.SelectKey}: Play  {config.StopKey}: Stop  {config.ToggleKey}: Close";
+            ? $"{BackgroundRadioMod.Instance.NavigateUpKey}/{BackgroundRadioMod.Instance.NavigateDownKey}: Navigate  {BackgroundRadioMod.Instance.SelectKey}: Play  {BackgroundRadioMod.Instance.StopKey}: Stop  {BackgroundRadioMod.Instance.ToggleKey}: Close"
+            : $"{BackgroundRadioMod.Instance.NavigateUpKey}/{BackgroundRadioMod.Instance.NavigateDownKey}: Navigate  {BackgroundRadioMod.Instance.SelectKey}: Play  {BackgroundRadioMod.Instance.StopKey}: Stop  {BackgroundRadioMod.Instance.ToggleKey}: Close";
         GUI.Label(new Rect(rect.x + 5, by, rect.width - 10, 24), hint, _infoStyle);
 
         if (_statusTimer > 0)
@@ -220,19 +218,6 @@ public sealed class RadioUI
         }
     }
 
-    private static void DrawKeyBinds(Rect rect, BackgroundRadioConfig config, float y)
-    {
-        float x = rect.x + 8;
-        float w = (rect.width - 22) / 2f;
-        config.ToggleKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.ToggleKey), "Toggle", config.ToggleKey);
-        config.SelectKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.SelectKey), "Select", config.SelectKey);
-        y += 22;
-        config.NavigateUpKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.NavigateUpKey), "Up", config.NavigateUpKey);
-        config.NavigateDownKey = KeyBindWidget.Draw(new Rect(x + w + 6, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.NavigateDownKey), "Down", config.NavigateDownKey);
-        y += 22;
-        config.StopKey = KeyBindWidget.Draw(new Rect(x, y, w, 20), BackgroundRadioMod.KeyBindFile, nameof(config.StopKey), "Stop", config.StopKey);
-    }
-
     public void HandleKeyboard(BroadcastifyService service, AudioPlayer player, BackgroundRadioConfig config,
         OfflineScannerPlayer? offlinePlayer = null)
     {
@@ -243,23 +228,23 @@ public sealed class RadioUI
             var files = offlinePlayer!.Playlist;
             if (files.Count == 0) return;
 
-            if (Input.GetKeyDown(config.NavigateUpKey))
+            if (Input.GetKeyDown(BackgroundRadioMod.Instance.NavigateUpKey))
             {
                 _selectedIndex = (_selectedIndex - 1 + files.Count) % files.Count;
                 ScrollToVisible();
             }
-            else if (Input.GetKeyDown(config.NavigateDownKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.NavigateDownKey))
             {
                 _selectedIndex = (_selectedIndex + 1) % files.Count;
                 ScrollToVisible();
             }
-            else if (Input.GetKeyDown(config.SelectKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.SelectKey))
             {
                 offlinePlayer.Stop();
                 _ = offlinePlayer.PlayFromIndexAsync(_selectedIndex);
                 SetStatus($"Playing: {Path.GetFileName(files[_selectedIndex])}");
             }
-            else if (Input.GetKeyDown(config.StopKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.StopKey))
             {
                 offlinePlayer.Stop();
                 SetStatus("Playback stopped.");
@@ -270,23 +255,23 @@ public sealed class RadioUI
             var feeds = service.GetCachedFeeds();
             if (feeds.Count == 0) return;
 
-            if (Input.GetKeyDown(config.NavigateUpKey))
+            if (Input.GetKeyDown(BackgroundRadioMod.Instance.NavigateUpKey))
             {
                 _selectedIndex = (_selectedIndex - 1 + feeds.Count) % feeds.Count;
                 ScrollToVisible();
             }
-            else if (Input.GetKeyDown(config.NavigateDownKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.NavigateDownKey))
             {
                 _selectedIndex = (_selectedIndex + 1) % feeds.Count;
                 ScrollToVisible();
             }
-            else if (Input.GetKeyDown(config.SelectKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.SelectKey))
             {
                 var feed = feeds[_selectedIndex];
                 SetStatus($"Connecting to {feed.Name}...");
                 _ = PlayFeedAsync(service, player, feed.Id, feed.Name);
             }
-            else if (Input.GetKeyDown(config.StopKey))
+            else if (Input.GetKeyDown(BackgroundRadioMod.Instance.StopKey))
             {
                 player.Stop();
                 SetStatus("Playback stopped.");

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using FlashingLights.ModKit.Core;
-using UnityEngine;
 
 namespace GrammarPoliceMod;
 
@@ -20,16 +19,6 @@ public sealed class GrammarPoliceConfig
     public double HotReloadIntervalSeconds { get; set; } = 1;
 
     public bool VoiceRecognitionEnabled { get; set; } = true;
-
-    [ModKitConfigDisplay("Push-to-Talk Key (hold to transmit)")]
-    public KeyCode PushToTalkKey { get; set; } = KeyCode.LeftControl;
-
-    [ModKitConfigDisplay("Toggle Radio UI Key")]
-    public KeyCode RadioUIToggleKey { get; set; } = KeyCode.F12;
-
-    public KeyCode RadioNavigateUpKey { get; set; } = KeyCode.UpArrow;
-    public KeyCode RadioNavigateDownKey { get; set; } = KeyCode.DownArrow;
-    public KeyCode RadioSelectKey { get; set; } = KeyCode.Return;
 
     [ModKitConfigDisplay("Confidence Threshold")]
     [ModKitConfigRange(0.1, 1.0, 0.05)]
@@ -60,9 +49,6 @@ public sealed class GrammarPoliceConfig
     [ModKitConfigDisplay("10-10 Key Sequence")] public string KeySequence_10_10 { get; set; } = "";
 
     public bool PanicEnabled { get; set; } = true;
-
-    [ModKitConfigDisplay("Panic Trigger Key (press rapidly N times)")]
-    public KeyCode PanicTriggerKey { get; set; } = KeyCode.F;
 
     [ModKitConfigDisplay("Panic Press Count (minimum 3)")]
     [ModKitConfigRange(3, 10, 1)]

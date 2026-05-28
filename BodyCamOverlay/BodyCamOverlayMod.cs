@@ -21,6 +21,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override string ModId => "bodycam-overlay";
     protected override bool EnableConfigHotReload => true;
     protected override TimeSpan ConfigReloadInterval => TimeSpan.FromSeconds(1);
+    internal const string KeyBindFile = "BodyCamOverlay.keybinds";
     private static readonly string[] WeaponNames = { "Gun_AP58", "Wep_Pistol_01" };
 
     private GameObject? _cachedPlayer;
@@ -32,7 +33,10 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     private float _nextWeaponCacheRefreshTime;
     private float _signalTimer;
     private float _emergencyTriggerTimer;
+    private float _keyBindReloadTimer;
     private int _emergencyTriggerPresses;
+    private KeyCode _toggleKey = KeyCode.F8;
+    private KeyCode _emergencyTriggerKey = KeyCode.Alpha2;
     private string _signalPath = "";
     private bool _isPlayingSignal;
     private RuntimeAudioPlayer? _audioPlayer;
@@ -46,6 +50,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override void OnModKitInitialized()
     {
         _signalPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "AxonSignal.wav");
+        LoadKeyBinds();
         EnsureSignalWav(_signalPath);
         _audioPlayer = new RuntimeAudioPlayer(
             debugLog: msg => { if (Config.DebugLogging) LogDebug(msg); },
@@ -66,8 +71,14 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     protected override void OnModKitUpdate()
     {
         if (!Config.Enabled) return;
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
+        {
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
+        }
 
-        if (Input.GetKeyDown(Config.ToggleKey))
+        if (Input.GetKeyDown(_toggleKey))
         {
             if (_overlayActive)
                 DeactivateOverlay();
@@ -109,7 +120,7 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
         else
             _emergencyTriggerPresses = 0;
 
-        if (!Input.GetKeyDown(Config.EmergencyTriggerKey)) return;
+        if (!Input.GetKeyDown(_emergencyTriggerKey)) return;
 
         if (_emergencyTriggerTimer <= 0f)
             _emergencyTriggerPresses = 0;
@@ -132,6 +143,12 @@ public sealed class BodyCamOverlayMod : ModKitMelonMod<BodyCamConfig>
     {
         _overlayActive = false;
         _signalTimer = Math.Max(10f, Config.SignalIntervalSeconds);
+    }
+
+    private void LoadKeyBinds()
+    {
+        _toggleKey = KeyBindStore.Load(KeyBindFile, "ToggleKey", _toggleKey);
+        _emergencyTriggerKey = KeyBindStore.Load(KeyBindFile, "EmergencyTriggerKey", _emergencyTriggerKey);
     }
 
     private void PlaySignalAndResetTimer()

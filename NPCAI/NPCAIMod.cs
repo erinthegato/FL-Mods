@@ -49,12 +49,15 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     private CancellationTokenSource? _cts;
     private GameObject? _nearbyNpc;
     private GameObject? _cachedPlayer;
+    private float _keyBindReloadTimer;
     private float _nextNpcScanTime;
     private float _nextNpcCacheRefreshTime;
     private readonly List<GameObject> _npcCandidates = new();
     private Vector3 _lastInteractionPosition;
     private bool _hasLastInteractionPosition;
     private const float SamePositionTolerance = 1.5f;
+    internal KeyCode ToggleKey { get; private set; } = KeyCode.F9;
+    internal KeyCode SendKey { get; private set; } = KeyCode.Return;
 
     private readonly Dictionary<string, NpcIdentity> _npcIdentityCache = new();
 
@@ -98,9 +101,8 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         Instance = this;
         _chat = new ChatService();
         _ui = new NPCInteractionUI();
-        Config.ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.ToggleKey), Config.ToggleKey);
-        Config.SendKey = KeyBindStore.Load(KeyBindFile, nameof(Config.SendKey), Config.SendKey);
-        LogInfo("NPC AI initialized. Press F9 to interact.");
+        LoadKeyBinds();
+        LogInfo($"NPC AI initialized. Press {ToggleKey} to interact.");
     }
 
     protected override void OnModKitEnabled() => LogInfo("NPC AI enabled.");
@@ -117,9 +119,14 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
     protected override void OnModKitUpdate()
     {
         if (!Config.ModEnabled) return;
-        if (KeyBindWidget.IsCapturing) return;
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
+        {
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
+        }
 
-        if (!_isWaiting && Input.GetKeyDown(Config.ToggleKey))
+        if (!_isWaiting && Input.GetKeyDown(ToggleKey))
         {
             if (_uiVisible)
             {
@@ -147,7 +154,7 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
 
         if (!_uiVisible) return;
 
-        if (!_isWaiting && Input.GetKeyDown(Config.SendKey))
+        if (!_isWaiting && Input.GetKeyDown(SendKey))
         {
             var text = _ui.InputText?.Trim();
             if (!string.IsNullOrWhiteSpace(text))
@@ -166,6 +173,12 @@ public sealed class NPCAIMod : ModKitMelonMod<NPCAIConfig>
         if (clearConversation) _chat.ClearHistory();
         _ui.OnGuiLostFocus();
         RestoreCursor();
+    }
+
+    private void LoadKeyBinds()
+    {
+        ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(ToggleKey), ToggleKey);
+        SendKey = KeyBindStore.Load(KeyBindFile, nameof(SendKey), SendKey);
     }
 
     private GameObject? FindNearbyNpc(bool force = false)

@@ -48,6 +48,10 @@ Session progress:
 - Fixed BodyCamOverlay and AssetLoader MelonLoader registration so they load as mods.
 - Fixed GrammarPolice speech-recognition dependency failure so it no longer floods the log every frame.
 - Built, deployed, committed, and pushed the latest bodycam, asset-loader, panic-trigger, and performance fixes to GitHub as 3eb7419.
+- Added FLModkitBindings as the single ModKit page for shared hotkeys.
+- Removed duplicate per-mod keybind fields and in-game keybind widgets from AssetLoader, BackgroundRadio, BodyCamOverlay, GrammarPolice, MDT, and NPCAI.
+- Updated those mods to reload centralized keybind files at runtime, so edits in FLModkitBindings propagate without per-mod binding pages.
+- Built and deployed the centralized keybinding changes successfully.
 
 Current working tree:
 $status

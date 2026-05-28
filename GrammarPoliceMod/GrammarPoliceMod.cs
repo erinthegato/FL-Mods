@@ -29,6 +29,12 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
     internal bool AutoDispatchEnabled => Config.AutoDispatchBackup;
     internal bool KeyEmulationEnabled => Config.KeyEmulationEnabled;
     internal DispatchAudio DispatchAudio => _dispatchAudio;
+    internal KeyCode PushToTalkKey { get; private set; } = KeyCode.LeftControl;
+    internal KeyCode RadioUIToggleKey { get; private set; } = KeyCode.F12;
+    internal KeyCode RadioNavigateUpKey { get; private set; } = KeyCode.UpArrow;
+    internal KeyCode RadioNavigateDownKey { get; private set; } = KeyCode.DownArrow;
+    internal KeyCode RadioSelectKey { get; private set; } = KeyCode.Return;
+    internal KeyCode PanicTriggerKey { get; private set; } = KeyCode.F;
 
     internal string GetKeySequence(int num) => num switch
     {
@@ -47,6 +53,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     private int _panicPressCount;
     private float _panicTimer;
+    private float _keyBindReloadTimer;
 
     private CommandEngine _commandEngine = null!;
     private DispatchAudio _dispatchAudio = null!;
@@ -65,6 +72,12 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
         LoadKeyBinds();
         _radioUI.SetOverlayDuration(Config.OverlayDisplaySeconds);
 
+        if (!CommandEngine.IsSpeechRuntimeAvailable(out string voiceReason))
+        {
+            _commandEngine.DisableVoice("Windows speech runtime dependency missing");
+            LogWarning($"Speech recognition disabled; button-only mode active. {voiceReason}");
+        }
+
         if (_dispatchAudio.PanicAudioFiles.Count > 0)
             LogInfo($"Panic audio files available: {string.Join(", ", _dispatchAudio.PanicAudioFiles)}");
         else
@@ -75,7 +88,10 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     protected override void OnModKitEnabled()
     {
-        LogInfo("Grammar Police enabled. Hold PTT key to transmit.");
+        if (VoiceRecognitionEnabled && _commandEngine.IsVoiceAvailable)
+            LogInfo("Grammar Police enabled. Hold PTT key to transmit.");
+        else
+            LogInfo("Grammar Police enabled in button-only mode. Use the radio UI for dispatch commands.");
     }
 
     protected override void OnModKitDisabled()
@@ -90,16 +106,17 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     protected override void OnModKitUpdate()
     {
-        if (KeyBindWidget.IsCapturing)
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
         {
-            _radioUI.Update(Time.unscaledDeltaTime);
-            return;
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
         }
 
         if (Config.PanicEnabled)
         {
             _panicTimer -= Time.unscaledDeltaTime;
-            if (Input.GetKeyDown(Config.PanicTriggerKey))
+            if (Input.GetKeyDown(PanicTriggerKey))
             {
                 if (_panicTimer <= 0f)
                     _panicPressCount = 0;
@@ -117,7 +134,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
                 _panicPressCount = 0;
         }
 
-        if (Input.GetKeyDown(Config.RadioUIToggleKey))
+        if (Input.GetKeyDown(RadioUIToggleKey))
         {
             _uiVisible = !_uiVisible;
             _pttShown = false;
@@ -125,7 +142,7 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
             LogDebug($"Radio UI toggled: {_uiVisible}");
         }
 
-        bool pttHeld = VoiceRecognitionEnabled && _commandEngine.IsVoiceAvailable && Input.GetKey(Config.PushToTalkKey);
+        bool pttHeld = VoiceRecognitionEnabled && _commandEngine.IsVoiceAvailable && Input.GetKey(PushToTalkKey);
         if (pttHeld && !_pttWasHeld)
         {
             _commandEngine.Start();
@@ -219,12 +236,12 @@ public sealed class GrammarPoliceMod : ModKitMelonMod<GrammarPoliceConfig>
 
     private void LoadKeyBinds()
     {
-        Config.PushToTalkKey = KeyBindStore.Load(KeyBindFile, nameof(Config.PushToTalkKey), Config.PushToTalkKey);
-        Config.RadioUIToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioUIToggleKey), Config.RadioUIToggleKey);
-        Config.RadioNavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioNavigateUpKey), Config.RadioNavigateUpKey);
-        Config.RadioNavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioNavigateDownKey), Config.RadioNavigateDownKey);
-        Config.RadioSelectKey = KeyBindStore.Load(KeyBindFile, nameof(Config.RadioSelectKey), Config.RadioSelectKey);
-        Config.PanicTriggerKey = KeyBindStore.Load(KeyBindFile, nameof(Config.PanicTriggerKey), Config.PanicTriggerKey);
+        PushToTalkKey = KeyBindStore.Load(KeyBindFile, nameof(PushToTalkKey), PushToTalkKey);
+        RadioUIToggleKey = KeyBindStore.Load(KeyBindFile, nameof(RadioUIToggleKey), RadioUIToggleKey);
+        RadioNavigateUpKey = KeyBindStore.Load(KeyBindFile, nameof(RadioNavigateUpKey), RadioNavigateUpKey);
+        RadioNavigateDownKey = KeyBindStore.Load(KeyBindFile, nameof(RadioNavigateDownKey), RadioNavigateDownKey);
+        RadioSelectKey = KeyBindStore.Load(KeyBindFile, nameof(RadioSelectKey), RadioSelectKey);
+        PanicTriggerKey = KeyBindStore.Load(KeyBindFile, nameof(PanicTriggerKey), PanicTriggerKey);
     }
 
     private void UpdateCursor()

@@ -207,11 +207,6 @@ public sealed class NPCInteractionUI
         GUI.EndScrollView();
         GUI.EndGroup();
 
-        float keyY = rect.y + rect.height - 154;
-        float keyW = (rect.width - 10) / 2f;
-        config.ToggleKey = KeyBindWidget.Draw(new Rect(rect.x + 4, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.ToggleKey), "Toggle NPC AI", config.ToggleKey);
-        config.SendKey = KeyBindWidget.Draw(new Rect(rect.x + 6 + keyW, keyY, keyW, 20), NPCAIMod.KeyBindFile, nameof(config.SendKey), "Send", config.SendKey);
-
         float iy2 = rect.y + rect.height - 130;
 
         // ID, MDT, Dispatch buttons
@@ -240,7 +235,7 @@ public sealed class NPCInteractionUI
         }
 
         var btnRect = new Rect(rect.x + 4, iy2, rect.width - 8, 22);
-        if (!isLoading && GUI.Button(btnRect, $"Send ({config.SendKey})", _btnStyle!))
+        if (!isLoading && GUI.Button(btnRect, $"Send ({mod.SendKey})", _btnStyle!))
         {
             var result = _inputText;
             _inputText = "";

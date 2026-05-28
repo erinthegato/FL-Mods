@@ -24,6 +24,7 @@ public sealed class MDTUI
     private int _filingModeIndex;
     private string _chargeSearch = "";
     private string _recordsSearch = "";
+    private string _filingSubjectSearch = "";
     private bool _showChargeDropdown = true;
     private string[] _cachedSubjects = Array.Empty<string>();
     private int _lastDataVersion = -1;
@@ -368,8 +369,6 @@ public sealed class MDTUI
         GUI.Label(new Rect(rect.x + rect.width - 160, rect.y + 8, 150, 20),
             DateTime.Now.ToString("HH:mm:ss"), _clockStyle);
 
-        MDTMod.Instance.DrawToggleKeyBind(new Rect(rect.x + 20, rect.y + 10, 150, 22));
-
         GUI.DrawTexture(new Rect(rect.x + 20, rect.y + 48, rect.width - 40, 1), _texLine);
     }
 
@@ -394,6 +393,7 @@ public sealed class MDTUI
                     _selectedChargeIndex = -1;
                     _selectedCitationIndex = -1;
                     _chargeSearch = "";
+                    _filingSubjectSearch = "";
                     _showNewRecordForm = false;
                     ClearArrestState();
                 }
@@ -469,18 +469,39 @@ public sealed class MDTUI
 
             _boldLabel.normal.textColor = _accentColor;
             GUI.Label(new Rect(0, btnY + 30, width, 22), "EXISTING SUBJECTS:", _boldLabel);
+            GUI.Label(new Rect(10, btnY + 56, 58, 22), "Search:", _labelStyle);
+            _filingSubjectSearch = GUI.TextField(new Rect(70, btnY + 56, Math.Min(330, width - 90), 22), _filingSubjectSearch, _inputField);
 
-            float y = btnY + 56;
-            var subjects = NPCDataStore.GetSubjectNames();
+            float y = btnY + 84;
+            var subjects = NPCDataStore.GetSubjectNames()
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             if (subjects.Length == 0)
             {
                 _labelStyle.normal.textColor = _textColor;
                 GUI.Label(new Rect(10, y, width, 20), "No subjects on file.", _labelStyle);
             }
+            else if (string.IsNullOrWhiteSpace(_filingSubjectSearch))
+            {
+                _labelStyle.normal.textColor = _textColor;
+                GUI.Label(new Rect(10, y, width, 20), "Type a name to search existing subjects.", _labelStyle);
+            }
             else
             {
-            _subjectBtnStyle.normal.textColor = _textColor;
-                foreach (var name in subjects)
+                string query = _filingSubjectSearch.Trim();
+                var matches = subjects
+                    .Where(n => n.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    .Take(12)
+                    .ToArray();
+
+                if (matches.Length == 0)
+                {
+                    _labelStyle.normal.textColor = _textColor;
+                    GUI.Label(new Rect(10, y, width, 20), "No matching subjects.", _labelStyle);
+                }
+
+                _subjectBtnStyle.normal.textColor = _textColor;
+                foreach (var name in matches)
                 {
                     if (GUI.Button(new Rect(10, y, width - 20, 22), name, _subjectBtnStyle))
                     {
@@ -489,6 +510,7 @@ public sealed class MDTUI
                         _lastName = parts.Length > 1 ? string.Join(" ", parts.Skip(1)) : "";
                         _subjectName = name;
                         _chargeSubjectSelected = true;
+                        _filingSubjectSearch = "";
                         GUI.FocusControl(null);
                         return;
                     }

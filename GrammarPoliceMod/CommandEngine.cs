@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Media.SpeechRecognition;
@@ -23,9 +24,40 @@ public sealed class CommandEngine : IDisposable
 
     public event Action<CommandEventArgs>? CommandRecognized;
 
+    public static bool IsSpeechRuntimeAvailable(out string reason)
+    {
+        try
+        {
+            Assembly.Load("Microsoft.Windows.SDK.NET");
+            reason = "";
+            return true;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+        {
+            reason = ex.Message;
+            return false;
+        }
+    }
+
+    public void DisableVoice(string reason)
+    {
+        IsVoiceAvailable = false;
+        _startFailed = false;
+        LastTransmission = string.IsNullOrWhiteSpace(reason)
+            ? "Voice: button-only mode"
+            : $"Voice: button-only mode ({reason})";
+    }
+
     public void Start()
     {
         if (IsRunning || _disposed || !IsVoiceAvailable) return;
+
+        if (!IsSpeechRuntimeAvailable(out string reason))
+        {
+            DisableVoice(reason);
+            MelonLoader.MelonLogger.Warning($"Speech recognition unavailable: {reason}");
+            return;
+        }
 
         _stopping = false;
         _engineThread = new Thread(RunEngine);

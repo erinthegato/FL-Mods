@@ -34,14 +34,14 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
     private bool _mdtVisible;
     private bool _cursorWasLocked;
     private float _courtTimer;
+    private float _keyBindReloadTimer;
     private int _courtIntervalMinutes;
     private HarmonyLib.Harmony? _harmony;
 
     protected override void OnModKitInitialized()
     {
         Instance = this;
-        Config.MDTToggleKey = KeyBindStore.Load(KeyBindFile, nameof(Config.MDTToggleKey), Config.MDTToggleKey);
-        ToggleKey = Config.MDTToggleKey;
+        LoadKeyBinds();
         _mdtUI = new MDTUI();
         NPCDataStore.LoadPhotos();
         LoadCourtInterval();
@@ -93,14 +93,19 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
 
     protected override void OnModKitUpdate()
     {
+        _keyBindReloadTimer -= Time.unscaledDeltaTime;
+        if (_keyBindReloadTimer <= 0f)
+        {
+            _keyBindReloadTimer = 1f;
+            LoadKeyBinds();
+        }
+
         HandleMDTToggle();
         UpdateCourtTimer();
     }
 
     private void HandleMDTToggle()
     {
-        if (KeyBindWidget.IsCapturing) return;
-
         if (Input.GetKeyDown(ToggleKey))
         {
             _mdtVisible = !_mdtVisible;
@@ -110,11 +115,10 @@ public sealed class MDTMod : ModKitMelonMod<MDTConfig>
         }
     }
 
-    internal KeyCode DrawToggleKeyBind(Rect rect)
+    private void LoadKeyBinds()
     {
-        Config.MDTToggleKey = KeyBindWidget.Draw(rect, KeyBindFile, nameof(Config.MDTToggleKey), "Toggle MDT", Config.MDTToggleKey);
-        ToggleKey = Config.MDTToggleKey;
-        return ToggleKey;
+        ToggleKey = KeyBindStore.Load(KeyBindFile, nameof(ToggleKey), ToggleKey);
+        ToggleKey = KeyBindStore.Load(KeyBindFile, "MDTToggleKey", ToggleKey);
     }
 
     private void UpdateCourtTimer()
